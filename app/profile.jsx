@@ -3,9 +3,10 @@
    ========================================================================= */
 
 function Profile({ nav, toast }) {
-  const [senior, setSenior] = useState(false);
-  const [voice, setVoice] = useState(true);
+  const [settings, setSettings] = useAppSettings();
   const [guard, setGuard] = useState(true);
+  const senior = settings.seniorMode;
+  const voice = settings.voiceGuide;
 
   return (
     <div className="scroll screen-anim">
@@ -56,12 +57,28 @@ function Profile({ nav, toast }) {
           <SectionLabel>접근성 & 보호</SectionLabel>
           <div className="card" style={{ padding:'4px 18px' }}>
             <SettingRow icon="eye" tone="#0d9488" title="시니어 모드" sub="큰 글씨 22px · 쉬운 설명 · WCAG AAA"
-              on={senior} onToggle={() => { setSenior(s=>!s); toast(senior?'시니어 모드 해제':'시니어 모드를 켰어요'); }} />
+              on={senior} onToggle={() => { const next = saveAppSettings({ seniorMode: !senior }); setSettings(next); toast(next.seniorMode ? '시니어 모드를 켰어요' : '시니어 모드를 해제했어요'); }} />
             <SettingRow icon="voice" tone="#0ea5e9" title="음성 안내 (TTS)" sub="경고·진단을 음성으로 읽어줘요"
-              on={voice} onToggle={() => setVoice(v=>!v)} />
+              on={voice} onToggle={() => { const next = saveAppSettings({ voiceGuide: !voice }); setSettings(next); toast(next.voiceGuide ? '음성 안내를 켰어요' : '음성 안내를 껐어요'); }} />
             <SettingRow icon="shield" tone="#16a34a" title="보이스피싱 보호" sub="이상거래 자동 감지 · 위험 시 이체 지연"
               on={guard} onToggle={() => setGuard(g=>!g)} last />
           </div>
+        </div>
+
+        <div className="card" style={{ marginTop:14, ...stagger(2.5) }}>
+          <div className="between" style={{ marginBottom:10 }}>
+            <b style={{ fontSize:14.5, color:'var(--ink)' }}>현재 안내 정책</b>
+            <span className="pill pill-teal" style={{ fontSize:10.5 }}>{voice ? 'TTS 켜짐' : 'TTS 꺼짐'}</span>
+          </div>
+          <p style={{ fontSize:12.5, lineHeight:1.6, color:'var(--slate-600)' }}>
+            쉬운 설명은 {senior ? '사용 중' : '기본'}이고, 음성 안내는 {voice ? '활성화' : '비활성화'} 상태예요. 이 설정은 채팅 에이전트와 안내 카드에 그대로 반영돼요.
+          </p>
+          <button className="btn btn-ghost" style={{ marginTop:12 }} onClick={() => {
+            speakText('안녕하세요. 제이비스 음성 안내를 테스트합니다. 지금은 쉬운 설명 모드와 음성 안내 상태를 확인하고 있어요.');
+            toast('음성 안내를 재생했어요');
+          }}>
+            음성 미리듣기
+          </button>
         </div>
 
         {/* 보이스피싱 데모 카드 */}
@@ -96,7 +113,7 @@ function Profile({ nav, toast }) {
 
         {/* 메뉴 */}
         <div className="card" style={{ marginTop:14, ...stagger(5), padding:'4px 18px' }}>
-          {[['보호자 알림 설정','bell'],['금융코칭 학습 현황','spark'],['개인정보 · 보안','lock'],['고객센터','chat']].map(([t,ic],i,arr) => (
+          {[['보호자 알림 설정','bell'],['금융코칭 학습 현황','spark'],['디지털 금융 단계별 안내','target'],['개인정보 · 보안','lock'],['고객센터','chat']].map(([t,ic],i,arr) => (
             <button key={i} onClick={() => toast(t)} className="lrow" style={{ width:'100%', textAlign:'left', borderTop: i?'1px solid var(--line)':'none' }}>
               <Icon name={ic} size={19} color="var(--slate-500)" />
               <span style={{ flex:1, fontSize:14, fontWeight:600, color:'var(--ink)' }}>{t}</span>
