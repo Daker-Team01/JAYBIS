@@ -16,11 +16,14 @@ const FEATURES = [
   { ic:'chat',     title:'AI 금융상담',    desc:'대화로 진단·코칭',     go:'chat',     tone:'#0047bb' },
   { ic:'shield',   title:'보이스피싱 보호', desc:'이상거래 실시간 감지',  go:'profile',  tone:'#0d2d77' },
   { ic:'eye',      title:'시니어 모드',     desc:'큰 글씨 · 음성 안내',   go:'profile',  tone:'#2f6bdb' },
+  { ic:'clock',    title:'연금 생활비',    desc:'노후 준비 부족분 점검', go:'chat',     tone:'#0d2d77' },
+  { ic:'voice',    title:'쉬운 설명·TTS',  desc:'음성 안내 · 단계별 설명', go:'profile', tone:'#0047bb' },
 ];
 
 function Home({ nav, toast }) {
   const [hide, setHide] = useState(false);
   const a = ASSETS;
+  const flow = CASHFLOW_INSIGHT;
   const mask = (s) => hide ? '••••••' : s;
 
   return (
@@ -113,6 +116,17 @@ function Home({ nav, toast }) {
                 <p style={{ fontSize:11.5, lineHeight:1.5, color:'rgba(255,255,255,.82)' }}>또래 평균보다 저축 여력이 <b>18% 높아요</b></p>
               </div>
             </div>
+            <div style={{ marginTop:12, padding:'12px 13px', background:'rgba(255,255,255,.1)', borderRadius:14, border:'1px solid rgba(255,255,255,.12)' }}>
+              <div className="between" style={{ marginBottom:8 }}>
+                <b style={{ fontSize:12.5, color:'#fff' }}>월 현금흐름 요약</b>
+                <span className="pill pill-ghost" style={{ fontSize:10.5 }}>{flow.risk}</span>
+              </div>
+              <div className="row" style={{ gap:8 }}>
+                <MiniStat label="소득" value={mask(won(flow.income))} />
+                <MiniStat label="지출" value={mask(won(flow.spend))} />
+                <MiniStat label="남는 돈" value={mask(won(flow.left))} accent />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -142,6 +156,8 @@ function Home({ nav, toast }) {
               body="주 2회로 줄이면 월 8만원 절약" onClick={() => nav('budget')} />
             <ActionCard tone="#0d2d77" icon="chat" title="구독 3개가 겹쳐요"
               body="하나만 남기면 월 18,500원 절약" onClick={() => nav('chat', '구독 정리하고 싶어')} />
+            <ActionCard tone="#16a34a" icon="shield" title="이상거래 점검"
+              body="수상한 이체 전, 위험도 먼저 확인" onClick={() => nav('chat', '보이스피싱 예방해줘')} />
           </div>
         </div>
       </div>
@@ -151,7 +167,7 @@ function Home({ nav, toast }) {
 
 function MiniStat({ label, value, accent }) {
   return (
-    <div style={{ flex:1, background:'rgba(255,255,255,.1)', borderRadius:13, padding:'10px 12px' }}>
+    <div style={{ flex:1, background: accent ? 'rgba(94,234,212,.16)' : 'rgba(255,255,255,.1)', borderRadius:13, padding:'10px 12px' }}>
       <div style={{ fontSize:11, color:'rgba(255,255,255,.7)', fontWeight:600 }}>{label}</div>
       <div className="tnum" style={{ fontSize:14, fontWeight:800, marginTop:3, color: accent ? 'var(--teal-300)' : '#fff' }}>{value}</div>
     </div>
