@@ -2,6 +2,11 @@
    제이비스 (JAYBIS) — 청년 금융상품 로드맵 + 납입 시뮬레이터
    ========================================================================= */
 
+const {
+  useState, TopBar, SectionLabel, Icon, stagger,
+  PRODUCTS, SIM, simulate, won, manwon,
+} = window;
+
 function Products({ nav, toast }) {
   const [monthly, setMonthly] = useState(SIM.defaultMonthly);
   const r = simulate(monthly);
@@ -102,7 +107,7 @@ function Products({ nav, toast }) {
         <button onClick={() => nav('chat')} className="card row" style={{ marginTop:14, ...stagger(3), gap:11, width:'100%', textAlign:'left', background:'var(--teal-50)', border:'1px solid var(--teal-100)' }}>
           <Icon name="chat" size={20} color="var(--teal-700)" />
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:13.5, fontWeight:700, color:'var(--teal-800)' }}>"청년도약계좌가 왜 1순위야?"</div>
+            <div style={{ fontSize:13.5, fontWeight:700, color:'var(--teal-800)' }}>&quot;청년도약계좌가 왜 1순위야?&quot;</div>
             <div style={{ fontSize:12, color:'var(--teal-700)', marginTop:2 }}>제이비스가 추천 이유를 쉽게 코칭해줘요</div>
           </div>
           <Icon name="chevR" size={17} color="var(--teal-600)" />
