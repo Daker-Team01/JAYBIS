@@ -2,6 +2,11 @@
    제이비스 (JAYBIS) — 청년 예산설계 (50/30/20 + 또래 비교)
    ========================================================================= */
 
+const {
+  useState, TopBar, SectionLabel, Icon, Bar, stagger,
+  BUDGET, won, manwon,
+} = window;
+
 function Budget({ nav, toast }) {
   const b = BUDGET;
   const [tab, setTab] = useState('all'); // all | need | want | save

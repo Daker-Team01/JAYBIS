@@ -3,6 +3,11 @@
    스플래시 → 마이데이터 동의 → AI 자산진단 → 유형 자동 분류
    ========================================================================= */
 
+const {
+  useState, useEffect, StatusBar, Logo, Icon, stagger,
+  MYDATA_INSTITUTIONS, ASSETS, AI_DIAGNOSIS, manwon, pct,
+} = window;
+
 function Onboarding({ onComplete }) {
   const [step, setStep] = useState('splash'); // splash | consent | analyzing | result
 

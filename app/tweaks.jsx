@@ -4,6 +4,11 @@
    (스케일된 프레임 바깥의 #tweaks-root 에 마운트)
    ========================================================================= */
 
+const {
+  ReactDOM, useEffect, useTweaks, TweaksPanel, TweakSection,
+  TweakColor, TweakToggle, TweakSlider,
+} = window;
+
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "palette": ["#0047bb", "#2f6bdb", "#a9c5f7"],
   "dark": false,

@@ -2,6 +2,11 @@
    제이비스 (JAYBIS) — 루트 App · 네비게이션
    ========================================================================= */
 
+const {
+  ReactDOM, useState, useToast, StatusBar, Onboarding,
+  Home, Budget, Products, Profile, Chat, Icon,
+} = window;
+
 function App() {
   const [phase, setPhase] = useState('onboarding'); // onboarding | app
   const [tab, setTab] = useState('home');
