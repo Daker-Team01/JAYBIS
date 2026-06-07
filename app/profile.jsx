@@ -5,14 +5,26 @@
      ========================================================================= */
 
   const {
-    useState, TopBar, Icon, SectionLabel, Toggle, stagger,
+    useState, useEffect, TopBar, Icon, SectionLabel, Toggle, stagger, useAppSettings, saveAppSettings,
     USER, MYDATA_INSTITUTIONS,
   } = window;
 
   function Profile({ nav, toast }) {
-    const [senior, setSenior] = useState(false);
+    const [settings] = useAppSettings();
+    const [senior, setSenior] = useState(Boolean(settings?.seniorMode));
     const [voice, setVoice] = useState(true);
     const [guard, setGuard] = useState(true);
+
+    useEffect(() => {
+      setSenior(Boolean(settings?.seniorMode));
+    }, [settings?.seniorMode]);
+
+    const toggleSenior = () => {
+      const next = !senior;
+      setSenior(next);
+      saveAppSettings({ seniorMode: next });
+      toast(next ? '시니어 모드를 켰어요' : '시니어 모드를 해제했어요');
+    };
 
     return (
       <div className="scroll screen-anim">
@@ -63,7 +75,7 @@
             <SectionLabel>접근성 & 보호</SectionLabel>
             <div className="card" style={{ padding:'4px 18px' }}>
               <SettingRow icon="eye" tone="#0d9488" title="시니어 모드" sub="큰 글씨 22px · 쉬운 설명 · WCAG AAA"
-                on={senior} onToggle={() => { setSenior(s=>!s); toast(senior?'시니어 모드 해제':'시니어 모드를 켰어요'); }} />
+                on={senior} onToggle={toggleSenior} />
               <SettingRow icon="voice" tone="#0ea5e9" title="음성 안내 (TTS)" sub="경고·진단을 음성으로 읽어줘요"
                 on={voice} onToggle={() => setVoice(v=>!v)} />
               <SettingRow icon="shield" tone="#16a34a" title="보이스피싱 보호" sub="이상거래 자동 감지 · 위험 시 이체 지연"

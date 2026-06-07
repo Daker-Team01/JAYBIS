@@ -3,16 +3,22 @@
    ========================================================================= */
 
 const {
-  ReactDOM, useState, useToast, StatusBar, Onboarding,
+  ReactDOM, useState, useEffect, useToast, useAppSettings, StatusBar, Onboarding,
   Home, Budget, Products, Profile, Chat, Icon,
 } = window;
 
 function App() {
   const [phase, setPhase] = useState('onboarding'); // onboarding | app
+  const [settings, saveSettings] = useAppSettings();
+  const [seniorMode, setSeniorMode] = useState(Boolean(settings?.seniorMode));
   const [tab, setTab] = useState('home');
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null);
   const [toastNode, toast] = useToast();
+
+  useEffect(() => {
+    setSeniorMode(Boolean(settings?.seniorMode));
+  }, [settings?.seniorMode]);
 
   const nav = (target, seed) => {
     if (target === 'chat') { setChatSeed(seed || null); setChatOpen(true); return; }
@@ -26,11 +32,18 @@ function App() {
   // 홈은 teal hero → 밝은 상태바, 나머지는 어두운 상태바
   const statusDark = tab !== 'home';
 
+  const toggleSeniorMode = () => {
+    const next = !seniorMode;
+    setSeniorMode(next);
+    saveSettings({ seniorMode: next });
+    toast(next ? '시니어 모드를 켰어요' : '시니어 모드를 껐어요');
+  };
+
   return (
     <div className="app">
       <StatusBar dark={statusDark} />
 
-      {tab === 'home'     && <Home     nav={nav} toast={toast} />}
+      {tab === 'home'     && (window.Senior && seniorMode ? <window.Senior nav={nav} toast={toast} seniorMode={seniorMode} setSeniorMode={toggleSeniorMode} /> : <Home nav={nav} toast={toast} />)}
       {tab === 'budget'   && <Budget   nav={nav} toast={toast} />}
       {tab === 'products' && <Products nav={nav} toast={toast} />}
       {tab === 'profile'  && <Profile  nav={nav} toast={toast} />}
