@@ -7,6 +7,7 @@ window.ReactDOM = { createRoot };
 async function bootstrap() {
   await import('../tweaks-panel.jsx');
   await import('./data.jsx');
+  await import('./financial-agent.jsx');
   await import('./ui.jsx');
   await import('./onboarding.jsx');
   await import('./dashboard.jsx');

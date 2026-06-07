@@ -7,18 +7,20 @@
 const {
   useState, useEffect, useRef, useAppSettings, summarizeEasy, speakText,
   StatusBar, Icon, Bar, Donut,
-  CHAT_QUICK, CHAT_TOOLSEQ, FRAUD_TOOLSEQ, PENSION_TOOLSEQ, GUIDE_TOOLSEQ,
+  STARTER_FEATURE_CHIPS, selectJaybisToolCall, executeJaybisToolCall, getJaybisToolSequence,
+  runJaybisOpenAIConversation, getJaybisOpenAIConfigStatus,
   AI_DIAGNOSIS, ASSETS, CASHFLOW_INSIGHT, FRAUD_INSIGHT, PENSION_PLAN,
-  PRODUCTS, won, manwon, pct,
+  PRODUCTS, USER, BUDGET, won, manwon, pct,
 } = window;
 
 function Chat({ onClose, seed }) {
   const [settings] = useAppSettings();
   const [msgs, setMsgs] = useState([
-    { id: 'g1', who: 'ai', kind: 'text', text: '안녕하세요 도윤님, 금융비서 제이비스예요. 자산·소비·상품 무엇이든 물어보세요. 거래내역을 직접 분석해 답해드릴게요.' },
+    { id: 'g1', who: 'ai', kind: 'text', text: '안녕하세요 도윤님, 금융비서 제이비스예요. 첫 월급 예산, 소비 진단, 청년 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.' },
   ]);
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState('');
+  const [status, setStatus] = useState(getJaybisOpenAIConfigStatus());
   const scrollRef = useRef(null);
   const idRef = useRef(2);
   const nid = () => 'm' + (idRef.current++);
@@ -30,88 +32,61 @@ function Chat({ onClose, seed }) {
 
   const push = (m) => setMsgs((prev) => [...prev, { id: nid(), ...m }]);
 
-  function classify(text) {
-    const t = text.replace(/\s/g, '');
-    if (/(많이썼|소비|어디에|지출|돈)/.test(t)) return 'spend';
-    if (/(상품|추천|도약|적금|청약)/.test(t)) return 'product';
-    if (/(자산|진단|순자산|부채)/.test(t)) return 'asset';
-    if (/(구독|넷플|OTT|정리)/.test(t)) return 'subs';
-    if (/(보이스피싱|사기|이체|수상|이상거래|차단)/.test(t)) return 'fraud';
-    if (/(연금|노후|생활비|은퇴)/.test(t)) return 'pension';
-    if (/(쉬운설명|단계별|어떻게해|처음|안내)/.test(t)) return 'guide';
-    return 'default';
-  }
-
   const emitAi = (text) => {
     const next = summarizeEasy(text, settings);
     push({ who: 'ai', kind: 'text', text: next });
     if (settings.voiceGuide) speakText(next, { rate: settings.ttsSpeed });
   };
 
-  function respond(text) {
+  const emitLocalResponse = (text) => {
+    const toolCall = selectJaybisToolCall(text);
+    const seq = getJaybisToolSequence(toolCall.name);
+    push({ who: 'ai', kind: 'tools', seq, toolCall });
+    const result = executeJaybisToolCall(toolCall);
+    emitAi(result.data.summary);
+    if (result.kind !== 'featureMenuResult') {
+      push({ who: 'ai', kind: result.kind, data: result.data });
+    }
+    push({ who: 'ai', kind: 'chips', items: result.data.nextChips || STARTER_FEATURE_CHIPS });
+  };
+
+  async function respond(text) {
     if (busy) return;
+    const nextMsgs = [...msgs, { id: nid(), who: 'me', kind: 'text', text }];
     push({ who: 'me', kind: 'text', text });
     setBusy(true);
-    const kind = classify(text);
-    const seqMap = {
-      spend: CHAT_TOOLSEQ,
-      asset: CHAT_TOOLSEQ,
-      product: CHAT_TOOLSEQ,
-      subs: CHAT_TOOLSEQ,
-      fraud: FRAUD_TOOLSEQ,
-      pension: PENSION_TOOLSEQ,
-      guide: GUIDE_TOOLSEQ,
-    };
-    const seq = seqMap[kind] || CHAT_TOOLSEQ;
-    push({ who: 'ai', kind: 'tools', seq });
-    const total = seq.reduce((s, t) => s + t.ms, 0) + 500;
+    try {
+      const remote = await runJaybisOpenAIConversation(nextMsgs, {
+        userName: USER?.name,
+        age: USER?.age,
+        monthlySalary: BUDGET?.salary,
+        annualIncome: BUDGET?.salary ? BUDGET.salary * 12 : undefined,
+        isHomeless: true,
+      });
+      setStatus(getJaybisOpenAIConfigStatus());
 
-    const map = {
-      product: () => {
-        emitAi('도윤님 조건이면 청년도약계좌가 1순위예요. 저축 여력이 높아서 비과세 혜택을 가장 크게 받을 수 있어요.');
-        push({ who: 'ai', kind: 'productResult' });
-        push({ who: 'ai', kind: 'chips', items: ['청년도약계좌가 왜 1순위야?', '월 얼마씩 넣어야 해?'] });
-      },
-      asset: () => {
-        emitAi(`${AI_DIAGNOSIS.comment} 지금 순자산은 ${won(ASSETS.netWorth)}이고, 부채비율은 ${pct(ASSETS.debtRatio, 1)}예요.`);
-        push({ who: 'ai', kind: 'assetResult' });
-        push({ who: 'ai', kind: 'chips', items: ['비상금 늘리는 방법은?', '연금 준비도 같이 봐줘'] });
-      },
-      subs: () => {
-        emitAi(`정기결제에서 ${CASHFLOW_INSIGHT.recurringCount}건의 고정 지출을 찾았어요. 구독과 외식·배달을 줄이면 월 ${won(CASHFLOW_INSIGHT.savingsPotential)} 정도를 아낄 수 있어요.`);
-        push({ who: 'ai', kind: 'cashflowResult' });
-        push({ who: 'ai', kind: 'chips', items: ['해지 방법 알려줘', '다른 절약 포인트는?'] });
-      },
-      spend: () => {
-        emitAi(`이번 달 한 달 돈 흐름을 분석했어요. 고정비는 ${won(CASHFLOW_INSIGHT.fixed)}이고, 변동비는 ${won(CASHFLOW_INSIGHT.variable)}예요. ${CASHFLOW_INSIGHT.risk === '주의' ? '지출을 조금만 줄이면 더 편해져요.' : '지금은 흐름이 안정적이에요.'}`);
-        push({ who: 'ai', kind: 'cashflowResult' });
-        push({ who: 'ai', kind: 'chips', items: ['고정비 더 줄여줘', '가장 많이 쓴 항목이 뭐야?'] });
-      },
-      fraud: () => {
-        emitAi(`위험 점수 ${FRAUD_INSIGHT.riskScore}점으로 ${FRAUD_INSIGHT.riskLabel} 수준이에요. 지금은 이체를 멈추고 수취인과 금액을 다시 확인하세요.`);
-        push({ who: 'ai', kind: 'fraudResult' });
-        push({ who: 'ai', kind: 'chips', items: ['차단해야 해?', '보호자에게 어떻게 알려?'] });
-      },
-      pension: () => {
-        emitAi(`현재 예상 월 수령액은 ${won(PENSION_PLAN.currentMonthlyPension)}이고, 목표 생활비 ${won(PENSION_PLAN.targetLivingCost)}까지는 월 ${won(PENSION_PLAN.monthlyGap)}가 부족해요.`);
-        push({ who: 'ai', kind: 'pensionResult' });
-        push({ who: 'ai', kind: 'chips', items: ['지금부터 뭘 하면 돼?', '연금 준비를 쉽게 설명해줘'] });
-      },
-      guide: () => {
-        emitAi('처음 하시는 분 기준으로 4단계로 안내드릴게요. 필요한 정보만 먼저 보고, 다음 행동을 차근차근 고르면 됩니다.');
-        push({ who: 'ai', kind: 'guideResult' });
-        push({ who: 'ai', kind: 'chips', items: ['음성으로 다시 읽어줘', '아주 쉽게 한 번 더'] });
-      },
-      default: () => {
-        emitAi('좋은 질문이에요. 거래내역과 자산 데이터를 기준으로 도와드릴게요. 아래에서 골라보셔도 좋아요.');
-        push({ who: 'ai', kind: 'chips', items: CHAT_QUICK });
-      },
-    };
+      if (remote.configured) {
+        if (remote.usedTool && remote.toolCall) {
+          const seq = getJaybisToolSequence(remote.toolCall.name);
+          push({ who: 'ai', kind: 'tools', seq, toolCall: remote.toolCall });
+          if (remote.result) {
+            push({ who: 'ai', kind: remote.result.kind, data: remote.result.data });
+          }
+        }
 
-    setTimeout(() => {
-      map[kind]();
+        if (remote.text) emitAi(remote.text);
+
+        const chips = remote.result?.data?.nextChips || STARTER_FEATURE_CHIPS;
+        push({ who: 'ai', kind: 'chips', items: chips });
+        return;
+      }
+      emitLocalResponse(text);
+    } catch (error) {
+      push({ who: 'ai', kind: 'text', text: `OpenAI 연결에 실패해서 로컬 모드로 이어갈게요. ${error?.message ? `(${error.message})` : ''}`.trim() });
+      emitLocalResponse(text);
+    } finally {
       setBusy(false);
-    }, total);
+    }
   }
 
   useEffect(() => {
@@ -134,7 +109,7 @@ function Chat({ onClose, seed }) {
             <div>
               <div style={{ fontSize: 15, fontWeight: 800 }}>제이비스</div>
               <div className="row" style={{ gap: 5, fontSize: 11.5, color: 'rgba(255,255,255,.8)' }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--teal-300)' }} /> 온라인 · 마이데이터 연결됨
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--teal-300)' }} /> {status}
               </div>
             </div>
           </div>
@@ -152,7 +127,7 @@ function Chat({ onClose, seed }) {
 
       {msgs.length <= 1 && (
         <div style={{ padding: '0 16px 10px', display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
-          {CHAT_QUICK.map((q, i) => (
+          {STARTER_FEATURE_CHIPS.map((q, i) => (
             <button key={i} onClick={() => respond(q)} className="pill" style={{ background: 'var(--card)', border: '1px solid var(--teal-100)', color: 'var(--teal-700)', fontSize: 12.5, padding: '9px 13px' }}>{q}</button>
           ))}
         </div>
@@ -198,6 +173,10 @@ function Message({ m, onChip }) {
   if (m.kind === 'spendResult') return <SpendResultCard />;
   if (m.kind === 'productResult') return <ChatProductCard />;
   if (m.kind === 'assetResult') return <ChatAssetCard />;
+  if (m.kind === 'budgetPlanResult') return <BudgetPlanCard data={m.data} />;
+  if (m.kind === 'spendingDiagnosisResult') return <SpendingDiagnosisCard data={m.data} />;
+  if (m.kind === 'productRoadmapResult') return <ProductRoadmapCard data={m.data} />;
+  if (m.kind === 'coachingResult') return <CoachingCard data={m.data} />;
   return null;
 }
 
@@ -311,6 +290,127 @@ function ChatAssetCard() {
           <div className="tnum" style={{ fontSize: 22, fontWeight: 800, color: 'var(--ink)', marginTop: 18 }}>{manwon(ASSETS.netWorth)}</div>
           <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--slate-600)', marginTop: 7 }}>순자산</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function BudgetPlanCard({ data }) {
+  return (
+    <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
+      <div className="between" style={{ marginBottom: 12 }}>
+        <div>
+          <b style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>첫 월급 예산 설계</b>
+          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>세후 {won(data.salary)} 기준</div>
+        </div>
+        <span className="pill pill-teal" style={{ fontSize: 10.5 }}>50·30·20</span>
+      </div>
+      <div style={{ display: 'flex', height: 12, borderRadius: 8, overflow: 'hidden', gap: 3, marginBottom: 11 }}>
+        {data.buckets.map((b, i) => (
+          <div key={b.key} style={{ flex: b.ratio, background: i === 0 ? 'var(--teal-600)' : i === 1 ? 'var(--warn)' : '#0ea5e9' }} />
+        ))}
+      </div>
+      {data.buckets.map((b, i) => (
+        <div key={b.key} className="between" style={{ padding: '9px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{b.label} {b.ratio}%</span>
+          <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: 'var(--ink)' }}>{won(b.amount)}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: 10, padding: '11px 13px', background: 'var(--teal-50)', borderRadius: 11 }}>
+        <p style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--teal-800)', fontWeight: 500 }}>
+          비상금은 먼저 월 {won(data.emergencyMonthly)}씩 자동이체로 쌓아두면 좋아요. 고정비 압박은 월급의 {pct(data.fixedPressure, 1)} 수준이에요.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SpendingDiagnosisCard({ data }) {
+  return (
+    <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
+      <div className="between" style={{ marginBottom: 12 }}>
+        <div>
+          <b style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>소비 진단</b>
+          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{data.source === 'manual' ? '수기 입력' : '마이데이터'} 분석</div>
+        </div>
+        <span className={'pill ' + (data.warning === '안정' ? 'pill-pos' : 'pill-warn')} style={{ fontSize: 10.5 }}>{data.warning}</span>
+      </div>
+      {[
+        { l: '수입', v: data.income, tone: 'var(--pos)' },
+        { l: '지출', v: data.spend, tone: 'var(--neg)' },
+        { l: '남은 돈', v: data.left, tone: 'var(--teal-600)' },
+        { l: '절약 가능액', v: data.savingsPotential, tone: 'var(--warn)' },
+      ].map((x, i) => (
+        <div key={x.l} className="between" style={{ padding: '7px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
+          <span className="muted" style={{ fontSize: 13 }}>{x.l}</span>
+          <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: x.tone }}>{won(x.v)}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: 10 }}>
+        {data.topCategories.slice(0, 3).map((c) => {
+          const max = Math.max(...data.topCategories.map((x) => x.value));
+          return (
+            <div key={c.label} style={{ marginTop: 9 }}>
+              <div className="between" style={{ marginBottom: 5 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink)' }}>{c.label}</span>
+                <span className="tnum muted" style={{ fontSize: 12 }}>{won(c.value)}</span>
+              </div>
+              <Bar value={c.value / max * 100} color="var(--teal-600)" height={6} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ProductRoadmapCard({ data }) {
+  return (
+    <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
+      <div className="between" style={{ marginBottom: 12 }}>
+        <div>
+          <b style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>청년 금융상품 로드맵</b>
+          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>가입 가능 조건 필터링</div>
+        </div>
+        <span className="pill pill-pos" style={{ fontSize: 10.5 }}>실행 연결</span>
+      </div>
+      {data.products.slice(0, 3).map((p, i) => (
+        <div key={p.id} style={{ padding: '10px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
+          <div className="between">
+            <div className="row" style={{ gap: 8 }}>
+              <span style={{ width: 24, height: 24, borderRadius: '50%', background: p.eligible ? p.tone : 'var(--slate-300)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>{i + 1}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--ink)' }}>{p.name}</span>
+            </div>
+            <span className={'pill ' + (p.eligible ? 'pill-pos' : 'pill-neg')} style={{ fontSize: 10 }}>{p.eligible ? '가능' : '확인'}</span>
+          </div>
+          <p className="muted" style={{ fontSize: 12.3, lineHeight: 1.45, marginTop: 6 }}>{p.eligible ? p.why : p.reasons.join(', ')}</p>
+        </div>
+      ))}
+      <div style={{ marginTop: 10, padding: '11px 13px', background: 'var(--teal-50)', borderRadius: 11 }}>
+        <div className="between">
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--teal-800)' }}>월 납입 {won(data.monthly)}</span>
+          <span className="tnum" style={{ fontSize: 14, fontWeight: 800, color: 'var(--teal-700)' }}>{won(data.simulation.total)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoachingCard({ data }) {
+  return (
+    <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
+      <div className="row" style={{ gap: 9, marginBottom: 10 }}>
+        <span style={{ width: 34, height: 34, borderRadius: 11, background: 'var(--teal-50)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="sparkF" size={17} color="var(--teal-700)" />
+        </span>
+        <div>
+          <b style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>{data.title}</b>
+          <div className="muted" style={{ fontSize: 12, marginTop: 1 }}>{data.product.name} 코칭</div>
+        </div>
+      </div>
+      <p style={{ fontSize: 13.2, lineHeight: 1.62, color: 'var(--slate-700)', fontWeight: 500 }}>{data.explanation}</p>
+      <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--teal-50)', borderRadius: 11, color: 'var(--teal-800)', fontSize: 12.5, lineHeight: 1.5, fontWeight: 600 }}>
+        결론: 왜 이 상품인지 이해한 뒤, 월 납입 가능액과 중도해지 조건을 같이 확인하면 됩니다.
       </div>
     </div>
   );
