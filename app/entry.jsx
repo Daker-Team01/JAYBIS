@@ -16,6 +16,7 @@ async function bootstrap() {
   await import('./chat.jsx');
   await import('./profile.jsx');
   await import('./main.jsx');
+  await import('./senior.jsx');
   await import('./tweaks.jsx');
 }
 
