@@ -1,15 +1,29 @@
-import { estimateMonthlyFromPension } from './pensionMock';
+import { analyzeRetirementIncome } from './pensionMock';
 
 export async function handleIntent(text = '') {
   const t = (text || '').toLowerCase();
 
   if (/연금|연금액|연금으로|연금 기반/.test(t)) {
     // 데모용 기본값 — 실제 연동 시 사용자 데이터로 대체
-    const total = 30000000; // 예시 총 연금 자산
-    const years = 15;
-    const monthly = estimateMonthlyFromPension({ totalPension: total, expectedYears: years });
-    const message = `예시 계산: 총 연금자산 ${total.toLocaleString()}원으로 약 월 ${monthly.toLocaleString()}원 수준이 가능합니다. 수령 시점이나 기간을 알려주시면 더 정확히 안내드릴게요.`;
-    return { intent: 'pension', message, data: { total, years, monthly } };
+    const analysis = analyzeRetirementIncome({
+      monthlyPension: 1500000,
+      monthlyExpense: 1300000,
+      assets: 50000000,
+      age: 67,
+      lifeExpectancy: 90,
+    });
+
+    const message = [
+      `연금 조회 결과, 월 연금은 ${analysis.pensionLookup.monthlyPension.toLocaleString()}원이에요.`,
+      `월 생활비는 약 ${analysis.expenseComparison.monthlyExpense.toLocaleString()}원으로, ${analysis.expenseComparison.gap >= 0 ? '월 여유' : '월 부족'}는 약 ${Math.abs(analysis.expenseComparison.gap).toLocaleString()}원입니다.`,
+      analysis.depletionSimulation.depletionLabel === '소진 없음'
+        ? '현재 자산 기준으로는 예상 소진 시점이 없어요.'
+        : `보유 자산 기준으로는 ${analysis.depletionSimulation.depletionLabel}에 소진될 수 있어요.`,
+      `시나리오별로는 ${analysis.scenarios.map((s) => `${s.name}(${s.lifeCoverage})`).join(', ')}.`,
+      `추천: ${analysis.recommendation}`,
+    ].join(' ');
+
+    return { intent: 'pension', message, data: analysis };
   }
 
   if (/생활비|생활비 관리|월 생활비/.test(t)) {
