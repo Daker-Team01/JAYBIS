@@ -98,8 +98,159 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     });
   };
 
+  const buildBudgetRecommendations = (data) => {
+    const need = data.buckets?.[0]?.amount || 0;
+    const want = data.buckets?.[1]?.amount || 0;
+    const save = data.buckets?.[2]?.amount || 0;
+    return [
+      { label: '주거·관리비', bucket: 'need', plan: Math.round(need * 0.42), icon: 'home' },
+      { label: '통신·교통', bucket: 'need', plan: Math.round(need * 0.18), icon: 'bus' },
+      { label: '식비·생활', bucket: 'need', plan: Math.round(need * 0.28), icon: 'cart' },
+      { label: '외식·취미', bucket: 'want', plan: Math.round(want * 0.45), icon: 'food' },
+      { label: '쇼핑·선물', bucket: 'want', plan: Math.round(want * 0.28), icon: 'bag' },
+      { label: '비상금', bucket: 'save', plan: Math.round(save * 0.55), icon: 'piggy' },
+      { label: '투자·자기계발', bucket: 'save', plan: Math.round(save * 0.35), icon: 'chart' },
+    ].filter((item) => item.plan > 0);
+  };
+
+  const clampBudgetRatio = (value) => Math.max(10, Math.min(80, Math.round(value)));
+
+  const normalizeBudgetData = (data, note) => {
+    const salary = Number(data.salary) || 0;
+    const sourceBuckets = data.buckets?.length ? data.buckets : [
+      { key: 'need', label: '필수비', ratio: 50 },
+      { key: 'want', label: '여유비', ratio: 30 },
+      { key: 'save', label: '저축·투자', ratio: 20 },
+    ];
+    const buckets = sourceBuckets.map((bucket, index) => {
+      const label = bucket.label || (index === 0 ? '필수비' : index === 1 ? '여유비' : '저축·투자');
+      const ratio = Number(bucket.ratio) || (index === 0 ? 50 : index === 1 ? 30 : 20);
+      return {
+        ...bucket,
+        label,
+        ratio,
+        amount: Math.round(salary * ratio / 100),
+      };
+    });
+    const normalized = {
+      ...data,
+      salary,
+      buckets,
+      adjustmentNote: note || data.adjustmentNote,
+    };
+    return {
+      ...normalized,
+      recommendations: buildBudgetRecommendations(normalized),
+      summary: `세후 월급 ${won(salary)} 기준으로 필수비 ${won(buckets[0]?.amount || 0)}, 여유비 ${won(buckets[1]?.amount || 0)}, 저축·투자 ${won(buckets[2]?.amount || 0)}로 조정했어요.`,
+    };
+  };
+
+  const rebalanceBudgetRatios = (data, targetKey, delta, note) => {
+    const indexByKey = { need: 0, want: 1, save: 2 };
+    const targetIndex = indexByKey[targetKey];
+    if (targetIndex == null) return null;
+
+    const buckets = (data.buckets || []).map((bucket) => ({ ...bucket }));
+    const target = buckets[targetIndex];
+    const oldTargetRatio = Number(target.ratio) || 0;
+    const adjustedTargetRatio = clampBudgetRatio(oldTargetRatio + delta);
+    let remainingDelta = adjustedTargetRatio - oldTargetRatio;
+    target.ratio = adjustedTargetRatio;
+
+    const preferredOrder = targetKey === 'save'
+      ? [1, 0]
+      : targetKey === 'want'
+        ? [2, 0]
+        : [1, 2];
+
+    for (const index of preferredOrder) {
+      if (!remainingDelta) break;
+      const bucket = buckets[index];
+      const current = Number(bucket.ratio) || 0;
+      if (remainingDelta > 0) {
+        const removable = Math.max(0, current - 10);
+        const take = Math.min(removable, remainingDelta);
+        bucket.ratio = current - take;
+        remainingDelta -= take;
+      } else {
+        const addable = Math.max(0, 80 - current);
+        const add = Math.min(addable, Math.abs(remainingDelta));
+        bucket.ratio = current + add;
+        remainingDelta += add;
+      }
+    }
+
+    const total = buckets.reduce((sum, bucket) => sum + (Number(bucket.ratio) || 0), 0);
+    const correction = 100 - total;
+    const correctionIndex = preferredOrder[0] ?? 0;
+    buckets[correctionIndex].ratio = clampBudgetRatio((Number(buckets[correctionIndex].ratio) || 0) + correction);
+
+    return normalizeBudgetData({ ...data, buckets }, note);
+  };
+
+  const parseBudgetAdjustment = (text, data) => {
+    const compact = text.replace(/\s/g, '');
+    const percentMatch = compact.match(/(\d{1,2})(?:%|퍼센트|프로)/);
+    const deltaSize = percentMatch ? Math.max(1, Math.min(20, Number(percentMatch[1]))) : 5;
+    const wantsIncrease = /(늘|올|높|증가|더|많)/.test(compact);
+    const wantsDecrease = /(줄|낮|감소|덜|빼)/.test(compact);
+    const direction = wantsDecrease ? -1 : wantsIncrease ? 1 : 0;
+
+    if (/(공격적저축|저축많|많이모|빡세)/.test(compact)) {
+      return normalizeBudgetData({
+        ...data,
+        budgetRule: 'aggressive_saving',
+        buckets: [
+          { key: 'need', label: '필수비', ratio: 45 },
+          { key: 'want', label: '여유비', ratio: 20 },
+          { key: 'save', label: '저축·투자', ratio: 35 },
+        ],
+      }, '저축을 우선하는 스타일로 바꿨어요.');
+    }
+    if (/(안전|보수|스타터|필수비여유)/.test(compact)) {
+      return normalizeBudgetData({
+        ...data,
+        budgetRule: 'starter_safe',
+        buckets: [
+          { key: 'need', label: '필수비', ratio: 55 },
+          { key: 'want', label: '여유비', ratio: 25 },
+          { key: 'save', label: '저축·투자', ratio: 20 },
+        ],
+      }, '필수비 여유를 더 두는 스타일로 바꿨어요.');
+    }
+    if (/(50.?30.?20|503020|오십삼십이십)/.test(compact)) {
+      return normalizeBudgetData({
+        ...data,
+        budgetRule: '50_30_20',
+        buckets: [
+          { key: 'need', label: '필수비', ratio: 50 },
+          { key: 'want', label: '여유비', ratio: 30 },
+          { key: 'save', label: '저축·투자', ratio: 20 },
+        ],
+      }, '50·30·20 균형형으로 다시 맞췄어요.');
+    }
+
+    const targetKey = /(저축|저금|투자|모으|비상금)/.test(compact)
+      ? 'save'
+      : /(여유|취미|쇼핑|외식|생활비|용돈)/.test(compact)
+        ? 'want'
+        : /(필수|고정|월세|통신|교통|주거)/.test(compact)
+          ? 'need'
+          : null;
+
+    if (!targetKey || !direction) return null;
+    const labels = { need: '필수비', want: '여유비', save: '저축·투자' };
+    return rebalanceBudgetRatios(
+      data,
+      targetKey,
+      direction * deltaSize,
+      `${labels[targetKey]} 비율을 ${deltaSize}%p ${direction > 0 ? '늘렸어요' : '줄였어요'}.`
+    );
+  };
+
   const applyBudgetPlan = (data) => {
     const snapshot = getRuntimeSnapshot();
+    const recommendedCategories = data.recommendations || buildBudgetRecommendations(data);
     const nextBudget = {
       ...(snapshot.raw.budget || {}),
       salary: data.salary,
@@ -111,11 +262,24 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         used: snapshot.budget.buckets?.[index]?.used || 0,
         tone: snapshot.budget.buckets?.[index]?.tone || (index === 0 ? '#0d9488' : index === 1 ? '#f59e0b' : '#0ea5e9'),
       })),
+      categories: recommendedCategories.map((item) => ({
+        ...item,
+        used: snapshot.budget.categories?.find((category) => category.label === item.label)?.used || 0,
+      })),
       nextMonthTip: `세후 ${won(data.salary)} 기준 예산을 반영했어요. 저축·투자 목표는 ${won(data.buckets[2]?.amount || 0)}입니다.`,
     };
     saveRuntimeData({ ...snapshot.raw, budget: nextBudget });
     toast('예산 설계를 반영했어요');
     return `좋아요. 첫 월급 예산을 실제 예산 화면에 반영했어요. 필수비 ${won(data.buckets[0]?.amount || 0)}, 여유비 ${won(data.buckets[1]?.amount || 0)}, 저축·투자 ${won(data.buckets[2]?.amount || 0)}로 저장했습니다.`;
+  };
+
+  const askToApplyBudgetPlan = (data, note = '이 예산안을 예산 화면에 바로 반영할 수 있어요.') => {
+    askToRunAction({
+      id: `budget-${Date.now()}`,
+      type: 'applyBudgetPlan',
+      data,
+      confirmText: `${note} 필수비 ${won(data.buckets[0]?.amount || 0)}, 여유비 ${won(data.buckets[1]?.amount || 0)}, 저축·투자 ${won(data.buckets[2]?.amount || 0)} 기준입니다.`,
+    });
   };
 
   const runConfirmedAction = (action) => {
@@ -133,12 +297,42 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       setPendingAction(null);
       return true;
     }
+    if (action.type === 'openBudgetInput') {
+      window.__JAYBIS_BUDGET_INPUT_MODE = action.mode;
+      toast(action.mode === 'manual' ? '수기 입력으로 이동해요' : '마이데이터 연결로 이동해요');
+      emitAi(action.mode === 'manual'
+        ? '좋아요. 예산 페이지에서 수기 데이터 입력을 진행할 수 있게 이동할게요.'
+        : '좋아요. 예산 페이지에서 마이데이터 JSON을 연결할 수 있게 이동할게요.');
+      setPendingAction(null);
+      nav('budget');
+      return true;
+    }
     return false;
   };
 
   const parseActionRequest = (text) => {
     const t = text.replace(/\s/g, '');
     const wantsVoice = /(tts|음성|읽어|소리)/i.test(t);
+    if (/(마이데이터|mydata)/i.test(t) && /(연동|연결|입력|데이터)/i.test(t)) {
+      return {
+        id: `mydata-${Date.now()}`,
+        type: 'openBudgetInput',
+        mode: 'mydata',
+        confirmText: '예산 페이지에서 마이데이터 JSON을 연결하면 예산 설계와 소비 진단에 바로 반영됩니다.',
+        yesLabel: '이동',
+        noLabel: '나중에',
+      };
+    }
+    if (/(수기|직접|손으로)/i.test(t) && /(입력|데이터|예산|소비)/i.test(t)) {
+      return {
+        id: `manual-${Date.now()}`,
+        type: 'openBudgetInput',
+        mode: 'manual',
+        confirmText: '마이데이터가 없다면 예산 페이지에서 월급과 지출을 수기로 입력할 수 있어요.',
+        yesLabel: '이동',
+        noLabel: '나중에',
+      };
+    }
     if (wantsVoice && /(꺼|끄|off|중지|그만)/i.test(t)) {
       return {
         id: `voice-off-${Date.now()}`,
@@ -168,13 +362,46 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     const result = executeJaybisToolCall(toolCall);
     emitAi(result.data.summary);
     if (result.kind === 'budgetPlanResult') {
-      askToRunAction({
-        id: `budget-${Date.now()}`,
-        type: 'applyBudgetPlan',
-        data: result.data,
-        confirmText: `방금 만든 첫 월급 예산안을 예산 화면에 바로 반영할 수 있어요. 필수비 ${won(result.data.buckets[0]?.amount || 0)}, 여유비 ${won(result.data.buckets[1]?.amount || 0)}, 저축·투자 ${won(result.data.buckets[2]?.amount || 0)} 기준입니다.`,
-      });
+      askToApplyBudgetPlan(result.data, '방금 만든 첫 월급 예산안을 예산 화면에 바로 반영할 수 있어요.');
     }
+    setChips(result.data.nextChips || STARTER_FEATURE_CHIPS);
+    setCards(buildFeatureCards(result.kind, result.data, nav));
+  };
+
+  const openBudgetDesigner = (text) => {
+    const toolCall = selectJaybisToolCall(text);
+    const salary = toolCall?.arguments?.monthlySalary || ASSETS?.cashflow?.income || 0;
+    push({
+      who: 'ai',
+      kind: 'budgetDesigner',
+      salary,
+      fixedCost: '',
+      savingsGoal: '비상금',
+      budgetRule: '50_30_20',
+    });
+  };
+
+  const handleBudgetDesignerSubmit = (messageId, values) => {
+    setMsgs((prev) => prev.map((m) => (
+      m.id === messageId ? { ...m, submitted: true } : m
+    )));
+    const toolCall = {
+      name: 'first_salary_budget_design',
+      arguments: {
+        monthlySalary: Number(values.salary) || 0,
+        fixedCost: Number(values.fixedCost) || 0,
+        savingsGoal: values.savingsGoal || '비상금',
+        budgetRule: values.budgetRule || '50_30_20',
+      },
+    };
+    const seq = getJaybisToolSequence(toolCall.name);
+    push({ who: 'ai', kind: 'tools', seq, toolCall });
+    const result = executeJaybisToolCall(toolCall);
+    const recommendations = buildBudgetRecommendations(result.data);
+    const data = { ...result.data, recommendations };
+    emitAi(result.data.summary);
+    push({ who: 'ai', kind: 'budgetPlanPreview', data, recommendations });
+    askToApplyBudgetPlan(data);
     setChips(result.data.nextChips || STARTER_FEATURE_CHIPS);
     setCards(buildFeatureCards(result.kind, result.data, nav));
   };
@@ -202,12 +429,30 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
           runConfirmedAction(pendingAction);
           return;
         }
+        if (pendingAction.type === 'applyBudgetPlan') {
+          const adjusted = parseBudgetAdjustment(prompt, pendingAction.data);
+          if (adjusted) {
+            resolveConfirmMessage(pendingAction.id, 'revised');
+            emitAi(adjusted.adjustmentNote || '요청한 방향으로 예산안을 다시 조정했어요.');
+            push({ who: 'ai', kind: 'budgetPlanPreview', data: adjusted, recommendations: adjusted.recommendations });
+            askToApplyBudgetPlan(adjusted, '수정한 예산안을 예산 화면에 반영할 수 있어요.');
+            setCards(buildFeatureCards('budgetPlanResult', adjusted, nav));
+            return;
+          }
+        }
+        emitAi('수정하고 싶은 방향을 예산 항목으로 말해주면 바로 다시 짤게요. 예: 저축비율을 늘려줘, 여유비를 5% 줄여줘, 안전 스타터로 바꿔줘.');
         return;
       }
 
       const requestedAction = parseActionRequest(prompt);
       if (requestedAction) {
         askToRunAction(requestedAction);
+        return;
+      }
+
+      const localToolCall = selectJaybisToolCall(prompt);
+      if (localToolCall.name === 'first_salary_budget_design') {
+        openBudgetDesigner(prompt);
         return;
       }
 
@@ -229,12 +474,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
 
         if (remote.text) emitAi(remote.text);
         if (result?.kind === 'budgetPlanResult') {
-          askToRunAction({
-            id: `budget-${Date.now()}`,
-            type: 'applyBudgetPlan',
-            data: result.data,
-            confirmText: `방금 만든 첫 월급 예산안을 예산 화면에 바로 반영할 수 있어요. 필수비 ${won(result.data.buckets[0]?.amount || 0)}, 여유비 ${won(result.data.buckets[1]?.amount || 0)}, 저축·투자 ${won(result.data.buckets[2]?.amount || 0)} 기준입니다.`,
-          });
+          askToApplyBudgetPlan(result.data, '방금 만든 첫 월급 예산안을 예산 화면에 바로 반영할 수 있어요.');
         }
         const nextChips = result?.data?.nextChips || STARTER_FEATURE_CHIPS;
         setChips(nextChips);
@@ -281,8 +521,6 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     setInput('');
   };
 
-  const summaryLeft = ASSETS.cashflow.left;
-
   return (
     <div
       className="screen-anim"
@@ -310,13 +548,13 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateRows: '3fr 2fr',
+          gridTemplateRows: 'minmax(0, 1fr) 128px',
           gap: 12,
         }}
       >
         <section className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 12px' }}>
           <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 2 }}>
-            {msgs.map((m) => <Message key={m.id} m={m} onChip={respond} onConfirm={handleConfirmAction} />)}
+            {msgs.map((m) => <Message key={m.id} m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} />)}
             {busy && <TypingBubble />}
           </div>
 
@@ -352,13 +590,13 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         </section>
 
         <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <div className="between" style={{ marginBottom: 10 }}>
+          <div className="between" style={{ marginBottom: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>
-                기능 카드
+                추천 기능
               </div>
               <div className="muted" style={{ fontSize: 11.5 }}>
-                대화에 따라 필요한 기능이 바뀌어요
+                지금 흐름에 맞춰 1개만 보여요
               </div>
             </div>
             <button onClick={() => toast('기능 카드가 대화 흐름에 맞춰 바뀌어요')} className="pill pill-teal" style={{ fontSize: 10.5 }}>
@@ -366,9 +604,9 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
             </button>
           </div>
 
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {cards.map((card, i) => (
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+              {cards.slice(0, 1).map((card, i) => (
                 <FeatureCard
                   key={card.id}
                   card={card}
@@ -379,24 +617,6 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
                   delay={i}
                 />
               ))}
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <SectionLabel>자산 한눈에</SectionLabel>
-              <div className="card-flat" style={{ padding: '14px 14px 12px', background: 'linear-gradient(160deg,var(--teal-800),var(--teal-700))', color: '#fff' }}>
-                <div className="between">
-                  <div>
-                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,.72)', fontWeight: 600 }}>이번 달 여유</div>
-                    <div className="tnum" style={{ fontSize: 22, fontWeight: 800, marginTop: 3 }}>{won(summaryLeft)}</div>
-                  </div>
-                  <span className="pill" style={{ background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 10.5 }}>부채비율 {pct(ASSETS.debtRatio, 1)}</span>
-                </div>
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,.14)' }}>
-                  <p style={{ fontSize: 12.5, lineHeight: 1.55, color: 'rgba(255,255,255,.84)', fontWeight: 500 }}>
-                    {AI_DIAGNOSIS.comment}
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -454,7 +674,7 @@ function buildFeatureCards(kind, data, nav, text) {
   return base;
 }
 
-function Message({ m, onChip, onConfirm }) {
+function Message({ m, onChip, onConfirm, onBudgetSubmit }) {
   if (m.who === 'me') return (
     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
       <div className="bubble bubble-me">{m.text}</div>
@@ -478,8 +698,8 @@ function Message({ m, onChip, onConfirm }) {
       <div className="card" style={{ maxWidth: '86%', padding: '12px 13px', border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)', marginBottom: 9 }}>{m.prompt || '이 작업을 실행할까요?'}</div>
         {m.resolved ? (
-          <span className={'pill ' + (m.resolved === 'approved' ? 'pill-pos' : 'pill-warn')} style={{ fontSize: 11.5 }}>
-            {m.resolved === 'approved' ? '승인됨' : '취소됨'}
+          <span className={'pill ' + (m.resolved === 'approved' ? 'pill-pos' : m.resolved === 'revised' ? 'pill-teal' : 'pill-warn')} style={{ fontSize: 11.5 }}>
+            {m.resolved === 'approved' ? '승인됨' : m.resolved === 'revised' ? '수정됨' : '취소됨'}
           </span>
         ) : (
           <div className="row" style={{ gap: 8 }}>
@@ -502,7 +722,134 @@ function Message({ m, onChip, onConfirm }) {
       </div>
     </div>
   );
+  if (m.kind === 'budgetDesigner') return (
+    <BudgetDesignerCard m={m} onSubmit={onBudgetSubmit} />
+  );
+  if (m.kind === 'budgetPlanPreview') return (
+    <BudgetPlanPreview data={m.data} recommendations={m.recommendations} />
+  );
   return null;
+}
+
+function BudgetDesignerCard({ m, onSubmit }) {
+  const [salary, setSalary] = useState(m.salary || '');
+  const [fixedCost, setFixedCost] = useState(m.fixedCost || '');
+  const [savingsGoal, setSavingsGoal] = useState(m.savingsGoal || '비상금');
+  const [budgetRule, setBudgetRule] = useState(m.budgetRule || '50_30_20');
+  const goals = ['비상금', '여행', '독립', '전세·주거', '투자 시작'];
+  const rules = [
+    { key: '50_30_20', label: '50·30·20', desc: '균형형' },
+    { key: 'aggressive_saving', label: '공격적 저축', desc: '저축 우선' },
+    { key: 'starter_safe', label: '안전 스타터', desc: '필수비 여유' },
+  ];
+
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+      <div className="card" style={{ maxWidth: '94%', padding: 14, border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
+        <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--ink)' }}>첫 월급 예산 설계</div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>금액과 목표를 선택하면 바로 예산안을 만들어요</div>
+
+        <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>
+          <BudgetInput label="세후 월급" value={salary} onChange={setSalary} />
+          <BudgetInput label="매달 꼭 나가는 돈" value={fixedCost} onChange={setFixedCost} placeholder="월세, 통신비 등" />
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>저축 목표</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {goals.map((goal) => (
+                <button
+                  key={goal}
+                  onClick={() => setSavingsGoal(goal)}
+                  className={'pill ' + (savingsGoal === goal ? 'pill-teal' : '')}
+                  style={{ border: '1px solid var(--teal-100)', background: savingsGoal === goal ? 'var(--teal-50)' : 'var(--card)', fontSize: 11.5 }}
+                >
+                  {goal}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>예산 스타일</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 7 }}>
+              {rules.map((rule) => (
+                <button
+                  key={rule.key}
+                  onClick={() => setBudgetRule(rule.key)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '9px 10px',
+                    borderRadius: 11,
+                    border: `1px solid ${budgetRule === rule.key ? 'var(--teal-600)' : 'var(--line)'}`,
+                    background: budgetRule === rule.key ? 'var(--teal-50)' : 'var(--card)',
+                  }}
+                >
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--ink)' }}>{rule.label}</span>
+                  <span className="muted" style={{ fontSize: 11.5 }}>{rule.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            disabled={m.submitted || !salary}
+            onClick={() => onSubmit(m.id, { salary, fixedCost, savingsGoal, budgetRule })}
+            className="btn btn-primary"
+            style={{ height: 40, fontSize: 14, boxShadow: 'none', opacity: m.submitted || !salary ? .45 : 1 }}
+          >
+            {m.submitted ? '설계 완료' : '예산안 만들기'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BudgetInput({ label, value, onChange, placeholder = '원 단위' }) {
+  return (
+    <label style={{ display: 'grid', gap: 5 }}>
+      <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)' }}>{label}</span>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ height: 38, border: '1px solid var(--line)', borderRadius: 11, padding: '0 11px', outline: 'none', color: 'var(--ink)', background: 'var(--bg)' }}
+      />
+    </label>
+  );
+}
+
+function BudgetPlanPreview({ data, recommendations = [] }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+      <div className="card" style={{ maxWidth: '94%', padding: 14, boxShadow: 'var(--shadow-sm)' }}>
+        <div className="between" style={{ marginBottom: 10 }}>
+          <b style={{ fontSize: 14.5, color: 'var(--ink)' }}>예산안 미리보기</b>
+          <span className="pill pill-teal" style={{ fontSize: 10.5 }}>{won(data.salary)}</span>
+        </div>
+        {data.buckets.map((bucket, index) => (
+          <div key={bucket.key} className="between" style={{ padding: '7px 0', borderTop: index ? '1px solid var(--line)' : 'none' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)' }}>{bucket.label} {bucket.ratio}%</span>
+            <span className="tnum" style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--teal-700)' }}>{won(bucket.amount)}</span>
+          </div>
+        ))}
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 7 }}>추천 항목</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {recommendations.slice(0, 5).map((item) => (
+              <div key={item.label} className="between" style={{ fontSize: 12.5 }}>
+                <span className="muted">{item.label}</span>
+                <b className="tnum" style={{ color: 'var(--ink)' }}>{won(item.plan)}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ToolSequence({ seq }) {
@@ -546,21 +893,23 @@ function FeatureCard({ card, onAction, delay }) {
       className="card"
       style={{
         textAlign: 'left',
-        padding: '14px 13px',
-        minHeight: 108,
+        padding: '13px 14px',
+        minHeight: 76,
         display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
         animationDelay: `${0.03 + delay * 0.045}s`,
       }}
     >
-      <span className="ic-chip" style={{ width: 38, height: 38, borderRadius: 12, background: `${card.tone}15` }}>
+      <span className="ic-chip" style={{ width: 42, height: 42, borderRadius: 12, background: `${card.tone}15`, flex: '0 0 auto' }}>
         <Icon name={card.icon} size={20} color={card.tone} />
       </span>
-      <div style={{ marginTop: 10 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 14.2, fontWeight: 800, color: 'var(--ink)', lineHeight: 1.25 }}>{card.title}</div>
-        <div className="muted" style={{ fontSize: 11.8, lineHeight: 1.45, marginTop: 4 }}>{card.desc}</div>
+        <div className="muted" style={{ fontSize: 11.8, lineHeight: 1.4, marginTop: 4, whiteSpace: 'normal' }}>{card.desc}</div>
       </div>
+      <Icon name="chevR" size={18} color="var(--slate-400)" />
     </button>
   );
 }

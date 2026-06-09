@@ -12,6 +12,7 @@ const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, ''
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SUPABASE_DATA_TABLE = import.meta.env.VITE_SUPABASE_DATA_TABLE || 'jaybis_runtime_data';
 const SUPABASE_DATA_ID = import.meta.env.VITE_SUPABASE_DATA_ID || 'default';
+const SUPABASE_PRODUCTS_TABLE = import.meta.env.VITE_SUPABASE_PRODUCTS_TABLE || 'financial_products';
 
 // ---- 포맷 헬퍼 --------------------------------------------------------------
 const numberOrZero = (value) => {
@@ -196,20 +197,75 @@ function normalizeProducts(products = []) {
         id: product.id || `product-${index + 1}`,
         rank: numberOrZero(product.rank || index + 1),
         name: product.name || '금융상품',
-        issuer: product.issuer || '',
+        issuer: product.issuer || product.provider || '',
+        provider: product.provider || product.issuer || '',
+        category: product.category || '',
         tagline: product.tagline || '',
-        rate: product.rate || '',
+        description: product.description || '',
+        rate: product.rate || product.rate_label || product.rateLabel || '',
+        rateLabel: product.rateLabel || product.rate_label || product.rate || '',
+        minRate: numberOrZero(product.minRate ?? product.min_rate),
+        maxRate: numberOrZero(product.maxRate ?? product.max_rate),
+        rateType: product.rateType || product.rate_type || '',
         maxMonthly: numberOrZero(product.maxMonthly),
         term: numberOrZero(product.term),
         maturity: numberOrZero(product.maturity),
         benefit: product.benefit || '',
         tags: Array.isArray(product.tags) ? product.tags : [],
-        why: product.why || '',
-        eligible: product.eligible !== false,
+        eligibility: product.eligibility || {},
+        limits: product.limits || {},
+        simulation: product.simulation || {},
+        coaching: product.coaching || {},
+        why: product.why || product.coaching?.why || product.description || '',
+        caution: product.caution || product.coaching?.caution || '',
+        eligible: product.eligible !== false && product.status !== 'inactive',
+        status: product.status || 'active',
         tone: product.tone || '#0d9488',
         ...product,
       }))
     : [];
+}
+
+function normalizeSupabaseFinancialProduct(row = {}, index = 0) {
+  const limits = row.limits || {};
+  const simulation = row.simulation || {};
+  const coaching = row.coaching || {};
+  const tags = Array.isArray(row.tags)
+    ? row.tags
+    : String(row.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean);
+
+  return normalizeProducts([{
+    id: row.id || row.product_id || `product-${index + 1}`,
+    name: row.name || row.product_name,
+    provider: row.provider || row.issuer,
+    issuer: row.issuer || row.provider,
+    category: row.category,
+    tagline: row.tagline,
+    description: row.description,
+    rank: row.rank || index + 1,
+    tone: row.tone,
+    status: row.status,
+    rate: row.rate || row.rate_label || row.rateLabel,
+    rateLabel: row.rate_label || row.rateLabel || row.rate,
+    minRate: row.min_rate ?? row.minRate,
+    maxRate: row.max_rate ?? row.maxRate,
+    rateType: row.rate_type || row.rateType,
+    benefit: row.benefit,
+    tags,
+    eligibility: row.eligibility || {},
+    limits,
+    simulation,
+    coaching,
+    maxMonthly: row.max_monthly ?? row.maxMonthly ?? limits.maxMonthly ?? limits.max_monthly,
+    term: row.term_months ?? row.termMonths ?? limits.termMonths ?? limits.term_months,
+    maturity: row.maturity ?? simulation.maturity,
+    why: row.why || coaching.why || row.description,
+    caution: row.caution || coaching.caution,
+    eligible: row.eligible,
+    sourceName: row.source_name || row.sourceName,
+    sourceUrl: row.source_url || row.sourceUrl,
+    updatedAt: row.updated_at || row.updatedAt,
+  }])[0];
 }
 
 function normalizeTransactions(transactions = []) {
@@ -217,14 +273,204 @@ function normalizeTransactions(transactions = []) {
     ? transactions.map((transaction, index) => ({
         id: transaction.id || `tx-${index + 1}`,
         date: transaction.date || '',
-        name: transaction.name || '',
+        name: transaction.name || transaction.merchantName || transaction.description || '',
         amount: numberOrZero(transaction.amount),
-        type: transaction.type === 'income' ? 'income' : 'spend',
         category: transaction.category || '기타',
-        fixed: Boolean(transaction.fixed),
+        categoryLabel: transaction.categoryLabel || transaction.category || '기타',
+        bucket: transaction.bucket || transaction.budgetBucket || '',
+        fixed: Boolean(transaction.fixed ?? transaction.isFixed),
         ...transaction,
+        type: transaction.type === 'income' ? 'income' : 'spend',
       }))
     : [];
+}
+
+function mapBudgetBucket(bucket) {
+  if (bucket === 'need') return 'need';
+  if (bucket === 'want') return 'want';
+  if (bucket === 'save') return 'save';
+  return '';
+}
+
+function buildCategoriesFromTransactions(transactions = [], budgets = {}) {
+  const plannedByBucket = Object.fromEntries((budgets.buckets || []).map((bucket) => [
+    bucket.key,
+    numberOrZero(bucket.plannedAmount ?? bucket.plan),
+  ]));
+  const grouped = transactions
+    .filter((transaction) => transaction.type === 'spend' && !transaction.isExcluded)
+    .reduce((acc, transaction) => {
+      const label = transaction.categoryLabel || transaction.category || '기타';
+      const bucket = mapBudgetBucket(transaction.budgetBucket || transaction.bucket) || 'want';
+      const key = `${bucket}:${label}`;
+      if (!acc[key]) {
+        acc[key] = {
+          label,
+          bucket,
+          used: 0,
+          plan: 0,
+          icon: bucket === 'need' ? 'home' : bucket === 'save' ? 'piggy' : 'bag',
+        };
+      }
+      acc[key].used += Math.abs(numberOrZero(transaction.amount));
+      return acc;
+    }, {});
+
+  const categories = Object.values(grouped);
+  const byBucketCounts = categories.reduce((acc, category) => {
+    acc[category.bucket] = (acc[category.bucket] || 0) + 1;
+    return acc;
+  }, {});
+  return categories.map((category) => ({
+    ...category,
+    plan: category.plan || Math.round((plannedByBucket[category.bucket] || category.used) / Math.max(1, byBucketCounts[category.bucket] || 1)),
+    warn: category.used > (category.plan || plannedByBucket[category.bucket] || category.used) * 1.05,
+  }));
+}
+
+function normalizeBudgetBucketsFromMyData(budgets = {}, salary = 0, categories = []) {
+  if (Array.isArray(budgets.buckets) && budgets.buckets.length) {
+    return budgets.buckets.map((bucket, index) => ({
+      ...EMPTY_BUDGET.buckets[index % EMPTY_BUDGET.buckets.length],
+      key: bucket.key,
+      label: bucket.label || EMPTY_BUDGET.buckets[index % EMPTY_BUDGET.buckets.length].label,
+      ratio: numberOrZero(bucket.ratio),
+      plan: numberOrZero(bucket.plannedAmount ?? bucket.plan),
+      used: numberOrZero(bucket.usedAmount ?? bucket.used),
+    }));
+  }
+  const usedByBucket = categories.reduce((acc, category) => {
+    acc[category.bucket] = (acc[category.bucket] || 0) + numberOrZero(category.used);
+    return acc;
+  }, {});
+  return EMPTY_BUDGET.buckets.map((bucket) => ({
+    ...bucket,
+    plan: Math.round(salary * bucket.ratio / 100),
+    used: usedByBucket[bucket.key] || 0,
+  }));
+}
+
+function normalizeMyDataRuntimeData(mydata = {}) {
+  const transactions = normalizeTransactions(mydata.transactions || []);
+  const analysis = mydata.analysis || {};
+  const income = mydata.income || {};
+  const accounts = Array.isArray(mydata.accounts) ? mydata.accounts : [];
+  const cards = Array.isArray(mydata.cards) ? mydata.cards : [];
+  const totalAssets = accounts.reduce((sum, account) => sum + Math.max(0, numberOrZero(account.balance)), 0);
+  const totalDebt = cards.reduce((sum, card) => sum + Math.max(0, numberOrZero(card.monthlyApprovedAmount)), 0);
+  const salary = numberOrZero(mydata.budgets?.salary || mydata.budget?.salary || income.monthlySalary || mydata.user?.monthlySalary || analysis.totalIncome);
+  const categories = buildCategoriesFromTransactions(transactions, mydata.budgets || mydata.budget || {});
+  const buckets = normalizeBudgetBucketsFromMyData(mydata.budgets || mydata.budget || {}, salary, categories);
+  const alerts = Array.isArray(analysis.signals)
+    ? analysis.signals.map((signal) => ({
+        type: signal.type || 'warning',
+        title: signal.title,
+        body: signal.description || signal.suggestedAction || '',
+        save: numberOrZero(signal.save),
+      }))
+    : [];
+
+  return {
+    user: {
+      ...(mydata.user || {}),
+      monthlySalary: salary,
+    },
+    institutions: Array.isArray(mydata.connections)
+      ? mydata.connections.map((connection) => ({
+          id: connection.institutionId,
+          name: connection.institutionName,
+          type: connection.type,
+          tone: connection.type === 'card' ? '#0f766e' : '#0d9488',
+          initial: (connection.institutionName || connection.type || '?').slice(0, 1).toUpperCase(),
+        }))
+      : undefined,
+    assets: {
+      totalAssets,
+      totalDebt,
+      cashflow: {
+        income: numberOrZero(analysis.totalIncome || salary),
+        spend: numberOrZero(analysis.totalExpense || transactions.filter((t) => t.type === 'spend').reduce((sum, t) => sum + Math.abs(numberOrZero(t.amount)), 0)),
+        left: analysis.remainingCash,
+      },
+    },
+    budget: {
+      month: mydata.budgets?.month || analysis.month || '',
+      rule: mydata.budgets?.rule || '50_30_20',
+      salary,
+      buckets,
+      categories,
+      alerts,
+      peers: [],
+      nextMonthTip: alerts[0]?.body || '마이데이터 기반으로 예산과 소비 습관을 계속 업데이트합니다.',
+    },
+    transactions,
+    mydata: {
+      connections: mydata.connections || [],
+      accounts,
+      cards,
+      income,
+      analysis,
+      metadata: mydata.metadata || {},
+    },
+    metadata: {
+      ...(mydata.metadata || {}),
+      dataSource: mydata.metadata?.dataSource || 'mydata_normalized',
+      importedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function saveMyDataRuntimeData(mydata) {
+  const current = readRuntimeData();
+  const normalized = normalizeMyDataRuntimeData(mydata);
+  return saveRuntimeData({ ...current, ...normalized });
+}
+
+function buildManualRuntimeData({ salary = 0, need = 0, want = 0, save = 0, memo = '' } = {}) {
+  const income = numberOrZero(salary);
+  const needUsed = numberOrZero(need);
+  const wantUsed = numberOrZero(want);
+  const saveUsed = numberOrZero(save);
+  const transactions = [
+    income ? { id: `manual-income-${Date.now()}`, date: new Date().toISOString().slice(0, 10), name: '수기 입력 급여', amount: income, type: 'income', category: 'salary', categoryLabel: '급여', fixed: true } : null,
+    needUsed ? { id: `manual-need-${Date.now()}`, date: new Date().toISOString().slice(0, 10), name: '수기 입력 필수비', amount: -needUsed, type: 'spend', category: 'manual_need', categoryLabel: '필수비', budgetBucket: 'need', fixed: true } : null,
+    wantUsed ? { id: `manual-want-${Date.now()}`, date: new Date().toISOString().slice(0, 10), name: '수기 입력 여유비', amount: -wantUsed, type: 'spend', category: 'manual_want', categoryLabel: '여유비', budgetBucket: 'want', fixed: false } : null,
+    saveUsed ? { id: `manual-save-${Date.now()}`, date: new Date().toISOString().slice(0, 10), name: '수기 입력 저축·투자', amount: -saveUsed, type: 'spend', category: 'manual_save', categoryLabel: '저축·투자', budgetBucket: 'save', fixed: true } : null,
+  ].filter(Boolean);
+  const categories = buildCategoriesFromTransactions(transactions, {});
+  const buckets = EMPTY_BUDGET.buckets.map((bucket) => ({
+    ...bucket,
+    plan: Math.round(income * bucket.ratio / 100),
+    used: bucket.key === 'need' ? needUsed : bucket.key === 'want' ? wantUsed : saveUsed,
+  }));
+  return {
+    assets: {
+      cashflow: {
+        income,
+        spend: needUsed + wantUsed + saveUsed,
+        left: income - needUsed - wantUsed - saveUsed,
+      },
+    },
+    budget: {
+      salary: income,
+      buckets,
+      categories,
+      alerts: [],
+      peers: [],
+      nextMonthTip: memo || '수기 입력 데이터를 기준으로 예산을 계산했어요. 마이데이터를 연결하면 더 세밀한 진단이 가능해요.',
+    },
+    transactions,
+    metadata: {
+      dataSource: 'manual_input',
+      importedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function saveManualRuntimeData(input) {
+  const current = readRuntimeData();
+  const normalized = buildManualRuntimeData(input);
+  return saveRuntimeData({ ...current, ...normalized });
 }
 
 function normalizeRuntimeData(raw = {}) {
@@ -316,6 +562,26 @@ async function saveSupabaseRuntimeData(data, { table = SUPABASE_DATA_TABLE, id =
     },
   });
   return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function fetchSupabaseFinancialProducts({ table = SUPABASE_PRODUCTS_TABLE } = {}) {
+  const params = new URLSearchParams({
+    select: '*',
+    order: 'rank.asc.nullslast,name.asc',
+  });
+  const rows = await supabaseRequest(table, { params: params.toString() });
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row?.status !== 'archived')
+    .map((row, index) => normalizeSupabaseFinancialProduct(row, index));
+}
+
+async function refreshSupabaseFinancialProducts() {
+  const products = await fetchSupabaseFinancialProducts();
+  const snapshot = getRuntimeSnapshot();
+  return saveRuntimeData({
+    ...snapshot.raw,
+    products,
+  });
 }
 
 async function refreshJaybisRuntimeData(endpoint = JAYBIS_DATA_ENDPOINT) {
@@ -650,9 +916,11 @@ if (JAYBIS_DATA_ENDPOINT) {
 
 Object.assign(window, {
   JAYBIS_DATA_KEY, JAYBIS_CHAT_KEY, JAYBIS_DATA_ENDPOINT,
-  SUPABASE_URL, SUPABASE_DATA_TABLE, SUPABASE_DATA_ID,
+  SUPABASE_URL, SUPABASE_DATA_TABLE, SUPABASE_DATA_ID, SUPABASE_PRODUCTS_TABLE,
   getRuntimeSnapshot, saveRuntimeData, refreshJaybisRuntimeData, useJaybisRuntimeData,
+  normalizeMyDataRuntimeData, saveMyDataRuntimeData, buildManualRuntimeData, saveManualRuntimeData,
   getSupabaseConfigStatus, supabaseRequest, fetchSupabaseRuntimeData, saveSupabaseRuntimeData,
+  fetchSupabaseFinancialProducts, refreshSupabaseFinancialProducts,
   defaultJaybisChatMessages, loadJaybisChatMessages, saveJaybisChatMessages, clearJaybisChatMessages, createJaybisMessageId,
   won, manwon, pct,
   USER, MYDATA_INSTITUTIONS, ASSETS, AI_DIAGNOSIS,

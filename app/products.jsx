@@ -3,14 +3,38 @@
    ========================================================================= */
 
 const {
-  useState, TopBar, SectionLabel, Icon, stagger,
+  useState, useEffect, TopBar, SectionLabel, Icon, stagger,
   PRODUCTS, SIM, simulate, won, manwon,
+  useJaybisRuntimeData, refreshSupabaseFinancialProducts,
 } = window;
 
 function Products({ nav, toast }) {
-  const [monthly, setMonthly] = useState(SIM.defaultMonthly);
-  const r = simulate(monthly);
-  const hasProducts = PRODUCTS.length > 0;
+  const [snapshot] = useJaybisRuntimeData();
+  const products = snapshot.products?.length ? snapshot.products : PRODUCTS;
+  const sim = snapshot.sim || SIM;
+  const [monthly, setMonthly] = useState(sim.defaultMonthly);
+  const [loadState, setLoadState] = useState('idle');
+  const [loadError, setLoadError] = useState('');
+  const r = simulate(monthly, sim);
+  const hasProducts = products.length > 0;
+
+  useEffect(() => {
+    let alive = true;
+    setLoadState('loading');
+    refreshSupabaseFinancialProducts()
+      .then((next) => {
+        if (!alive) return;
+        setLoadState('done');
+        const nextDefault = next.sim?.defaultMonthly ?? sim.defaultMonthly;
+        if (!monthly && nextDefault) setMonthly(nextDefault);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setLoadState('error');
+        setLoadError(error?.message || '상품 데이터를 불러오지 못했어요.');
+      });
+    return () => { alive = false; };
+  }, []);
 
   return (
     <div className="scroll screen-anim">
@@ -25,10 +49,10 @@ function Products({ nav, toast }) {
             </span>
             <div>
               <div style={{ fontSize:14.5, fontWeight:800, color:'var(--ink)' }}>
-                {hasProducts ? `가입 가능한 상품 ${PRODUCTS.length}개` : '상품 데이터 대기 중'}
+                {hasProducts ? `가입 가능한 상품 ${products.length}개` : loadState === 'loading' ? '상품 데이터 불러오는 중' : '상품 데이터 대기 중'}
               </div>
               <div className="muted" style={{ fontSize:12.5, marginTop:2 }}>
-                {hasProducts ? '나이 · 소득 · 조건으로 필터링했어요' : 'products 데이터가 연결되면 로드맵을 계산합니다'}
+                {hasProducts ? 'Supabase 금융상품 데이터를 반영했어요' : loadError || 'financial_products 테이블 데이터가 연결되면 로드맵을 계산합니다'}
               </div>
             </div>
           </div>
@@ -41,7 +65,7 @@ function Products({ nav, toast }) {
             {/* 세로 라인 */}
             <div style={{ position:'absolute', left:22, top:14, bottom:24, width:2, background:'var(--line)' }} />
             <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
-              {hasProducts ? PRODUCTS.map((p,i) => (
+              {hasProducts ? products.map((p,i) => (
                 <div key={p.id} style={{ position:'relative', paddingLeft:46 }}>
                   <span style={{ position:'absolute', left:8, top:18, width:28, height:28, borderRadius:'50%',
                     background:p.tone, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
@@ -52,7 +76,7 @@ function Products({ nav, toast }) {
                 <div className="card" style={{ padding:'16px 18px', marginLeft:0 }}>
                   <b style={{ fontSize:14.5, color:'var(--ink)' }}>연결할 상품이 없습니다</b>
                   <p className="muted" style={{ fontSize:12.5, lineHeight:1.55, marginTop:6 }}>
-                    API 응답 또는 localStorage jaybis.realData에 products 배열을 넣으면 이 영역에 실제 상품이 표시됩니다.
+                    Supabase `financial_products` 테이블을 읽을 수 있으면 이 영역에 실제 상품이 표시됩니다.
                   </p>
                 </div>
               )}
@@ -68,10 +92,10 @@ function Products({ nav, toast }) {
               <div className="between">
                 <div className="row" style={{ gap:7 }}>
                   <Icon name="piggy" size={18} color="var(--teal-300)" />
-                  <b style={{ fontSize:13.5, fontWeight:700 }}>{SIM.productName}</b>
+                  <b style={{ fontSize:13.5, fontWeight:700 }}>{sim.productName}</b>
                 </div>
                 <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>
-                  {SIM.termMonths}개월 {SIM.taxFreeNote ? `· ${SIM.taxFreeNote}` : ''}
+                  {sim.termMonths}개월 {sim.taxFreeNote ? `· ${sim.taxFreeNote}` : ''}
                 </span>
               </div>
               <div style={{ textAlign:'center', marginTop:16 }}>
@@ -89,11 +113,11 @@ function Products({ nav, toast }) {
                 <span style={{ fontSize:13.5, fontWeight:700, color:'var(--ink)' }}>월 납입액</span>
                 <span className="tnum" style={{ fontSize:18, fontWeight:800, color:'var(--teal-600)' }}>{won(monthly)}</span>
               </div>
-              <input type="range" className="sim" min={SIM.minMonthly} max={SIM.maxMonthly} step={SIM.stepMonthly}
+              <input type="range" className="sim" min={sim.minMonthly} max={sim.maxMonthly} step={sim.stepMonthly}
                 value={monthly} onChange={e => setMonthly(+e.target.value)} />
               <div className="between" style={{ marginTop:6 }}>
-                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(SIM.minMonthly)}원</span>
-                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(SIM.maxMonthly)}원</span>
+                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(sim.minMonthly)}원</span>
+                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(sim.maxMonthly)}원</span>
               </div>
 
               <div className="divider" style={{ margin:'18px 0' }} />
@@ -110,7 +134,7 @@ function Products({ nav, toast }) {
                 </div>
               ))}
 
-              <button onClick={() => toast(SIM.productName + ' 가입을 시작했어요')} className="btn btn-primary" style={{ marginTop:16 }}>
+              <button onClick={() => toast(sim.productName + ' 가입을 시작했어요')} className="btn btn-primary" style={{ marginTop:16 }}>
                 이 조건으로 가입하기
               </button>
             </div>
