@@ -9,8 +9,14 @@
     USER, MYDATA_INSTITUTIONS,
   } = window;
 
+  const TONE_OPTIONS = [
+    { id: 'friendly', emoji: '😊', label: '친근하게',  desc: '편하고 따뜻한 말투' },
+    { id: 'formal',   emoji: '💼', label: '격식 있게', desc: '정중하고 신뢰감 있는 말투' },
+    { id: 'concise',  emoji: '⚡', label: '간결하게',  desc: '핵심만 짧고 빠르게' },
+  ];
+
   function Profile({ nav, toast }) {
-    const [settings] = useAppSettings();
+    const [settings, saveSettings] = useAppSettings();
     const [senior, setSenior] = useState(Boolean(settings?.seniorMode));
     const [voice, setVoice] = useState(Boolean(settings?.voiceGuide));
     const [guard, setGuard] = useState(Boolean(settings?.fraudProtection));
@@ -86,6 +92,29 @@
             <p className="muted" style={{ fontSize:11.5, marginTop:8, lineHeight:1.5, padding:'0 2px' }}>
               소득·자산 변화를 감지해 트랙은 자동으로 전환돼요. 결혼·출산·주택 마련 이벤트도 곧 지원됩니다.
             </p>
+          </div>
+
+          {/* AI 말투 설정 */}
+          <div style={{ marginTop:20, ...stagger(2) }}>
+            <SectionLabel>AI 말투</SectionLabel>
+            <div className="card" style={{ padding:'14px 16px' }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {TONE_OPTIONS.map((t) => {
+                  const sel = settings?.tone === t.id;
+                  return (
+                    <button key={t.id} onClick={() => { saveSettings({ tone: t.id }); toast(`말투를 "${t.label}"로 변경했어요`); }}
+                      style={{ display:'flex', alignItems:'center', gap:12, padding:'11px 14px', borderRadius:12, border: sel ? '1.5px solid var(--teal-500)' : '1.5px solid var(--line)', background: sel ? 'var(--teal-50)' : 'transparent', textAlign:'left', cursor:'pointer' }}>
+                      <span style={{ fontSize:20 }}>{t.emoji}</span>
+                      <div>
+                        <div style={{ fontSize:13.5, fontWeight:700, color: sel ? 'var(--teal-700)' : 'var(--ink)' }}>{t.label}</div>
+                        <div className="muted" style={{ fontSize:11.5, marginTop:1 }}>{t.desc}</div>
+                      </div>
+                      {sel && <span style={{ marginLeft:'auto' }}><Icon name="check" size={16} color="var(--teal-500)" /></span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {/* 접근성 & 보호 */}

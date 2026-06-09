@@ -28,6 +28,7 @@ const EMPTY_USER = {
   age: 0,
   job: '',
   track: '',
+  tone: '',
   joinedMonths: 0,
   greeting: '사용자',
 };
@@ -619,6 +620,7 @@ const DEFAULT_APP_SETTINGS = {
   voiceGuide: true,
   ttsSpeed: 1,
   fraudProtection: true,
+  tone: '',
 };
 
 const DEFAULT_ONBOARDING_STATE = {
@@ -744,6 +746,7 @@ function saveOnboardingState(profile) {
     profile: profile || null,
   };
   if (typeof window !== 'undefined') {
+    if (profile?.tone) saveAppSettings({ tone: profile.tone });
     window.__JAYBIS_ONBOARDING = next;
     try {
       window.localStorage.setItem(ONBOARDING_STATE_KEY, JSON.stringify(next));
