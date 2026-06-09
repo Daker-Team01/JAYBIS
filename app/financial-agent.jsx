@@ -4,14 +4,18 @@
    ========================================================================= */
 
 const {
-  USER, BUDGET, PRODUCTS, SIM, DUMMY_TRANSACTIONS,
+  USER, BUDGET, PRODUCTS, SIM, TRANSACTIONS,
+  getRuntimeSnapshot,
   analyzeCashflow, simulate, won, manwon, pct,
 } = window;
 
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
 const OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4.1-mini';
 const OPENAI_CONFIGURED = Boolean(OPENAI_API_KEY);
+const SUPABASE_AGENT_FUNCTION = import.meta.env.VITE_SUPABASE_AGENT_FUNCTION || 'jaybis-agent';
+const USE_SUPABASE_AGENT = import.meta.env.VITE_USE_SUPABASE_AGENT !== 'false';
 let OPENAI_LAST_ERROR = '';
+let SUPABASE_AGENT_LAST_ERROR = '';
 
 const JAYBIS_AI_TOOLS = [
   {
@@ -128,7 +132,7 @@ const STARTER_FEATURE_CHIPS = [
   '마이데이터로 소비 진단해줘',
   '수기로 소비 입력할래',
   '청년 금융상품 추천해줘',
-  '청년도약계좌가 왜 좋아?',
+  '추천 상품이 왜 좋아?',
 ];
 
 const JAYBIS_SYSTEM_PROMPT = [
@@ -140,6 +144,30 @@ const JAYBIS_SYSTEM_PROMPT = [
   '응답은 불필요하게 길지 않게, 실행 가능한 다음 행동을 포함해 마무리한다.',
 ].join(' ');
 
+const JAYBIS_MARKDOWN_STYLE_PROMPT = [
+  '출력은 항상 GitHub Flavored Markdown 형식으로 정리한다.',
+  '첫 줄은 상황에 맞는 이모지 1개와 굵은 한 줄 요약으로 시작하고, 본문은 짧은 문단과 bullet list를 섞어 읽기 쉽게 만든다.',
+  '이모지는 예산 💰, 소비 진단 📊, 저축 🐷, 경고 ⚠️, 다음 행동 ✅처럼 의미가 분명한 것만 섹션당 최대 1개 사용한다.',
+  '금액, 비율, 실행 항목처럼 중요한 값은 **굵게** 강조한다.',
+  '예산·소비·상품 비교처럼 항목이 3개 이상이면 표 대신 간결한 bullet list를 우선 사용한다.',
+  '사용자가 바로 누르거나 입력해야 하는 행동은 마지막에 `다음 행동`으로 1개만 제안한다.',
+  '불필요한 인사말, 긴 서론, 코드블록은 쓰지 않는다.',
+].join(' ');
+
+const TONE_PROMPTS = {
+  friendly: '말투는 따뜻하고 친근하게, 마치 오랜 친구가 곁에서 도와주는 느낌으로 대화한다. 사용자의 상황에 공감하는 말을 먼저 하고, "같이 해봐요", "걱정 마세요", "잘 하고 계세요", "진짜 잘 하셨어요"처럼 응원과 안심을 자연스럽게 녹인다. 딱딱하거나 사무적인 표현, 어려운 금융 용어는 쓰지 않고, 쉽고 부드러운 말로 풀어서 설명한다. 문장 끝에 따뜻한 여운이 남도록 마무리한다.',
+  formal:   '표준적인 존댓말을 사용하여 정중하고 신뢰감 있게 안내한다. 과도한 감정 표현 없이 필요한 정보를 명확하고 차분하게 전달한다.',
+  concise:  '최대한 짧고 핵심만 전달한다. 인사·공감·부연 설명은 모두 생략한다. 모든 답변은 불렛·번호 목록·표 형식으로만 구성하고, 산문형 문장은 쓰지 않는다.',
+};
+
+function buildJaybisSystemPrompt(extraPrompts = []) {
+  return [
+    JAYBIS_SYSTEM_PROMPT,
+    JAYBIS_MARKDOWN_STYLE_PROMPT,
+    ...extraPrompts,
+  ].filter(Boolean).join('\n\n');
+}
+
 function extractWonAmount(text) {
   const normalized = text.replace(/,/g, '').replace(/\s/g, '');
   const man = normalized.match(/(\d+(?:\.\d+)?)만원/);
@@ -150,7 +178,9 @@ function extractWonAmount(text) {
 }
 
 function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '비상금', budgetRule = '50_30_20' }) {
-  const salary = monthlySalary || BUDGET.salary;
+  const snapshot = getRuntimeSnapshot();
+  const budget = snapshot.budget || BUDGET;
+  const salary = monthlySalary || budget.salary;
   const ratios = budgetRule === 'aggressive_saving'
     ? { need: 45, want: 20, save: 35 }
     : budgetRule === 'starter_safe'
@@ -161,8 +191,10 @@ function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '
     { key: 'want', label: '여유비', ratio: ratios.want, amount: Math.round(salary * ratios.want / 100) },
     { key: 'save', label: '저축·투자', ratio: ratios.save, amount: Math.round(salary * ratios.save / 100) },
   ];
-  const fixedPressure = fixedCost ? fixedCost / salary * 100 : BUDGET.buckets[0].used / BUDGET.salary * 100;
-  const emergencyMonthly = Math.max(100000, Math.round(salary * 0.12 / 10000) * 10000);
+  const fixedPressure = salary
+    ? (fixedCost ? fixedCost / salary * 100 : (budget.buckets?.[0]?.used || 0) / salary * 100)
+    : 0;
+  const emergencyMonthly = salary ? Math.max(100000, Math.round(salary * 0.12 / 10000) * 10000) : 0;
 
   return {
     salary,
@@ -176,8 +208,11 @@ function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '
 }
 
 function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
-  const insight = analyzeCashflow(transactions?.length ? transactions : DUMMY_TRANSACTIONS);
-  const salary = monthlySalary || insight.income || BUDGET.salary;
+  const snapshot = getRuntimeSnapshot();
+  const budget = snapshot.budget || BUDGET;
+  const runtimeTransactions = snapshot.transactions || TRANSACTIONS;
+  const insight = analyzeCashflow(transactions?.length ? transactions : runtimeTransactions);
+  const salary = monthlySalary || insight.income || budget.salary;
   const spendRate = salary ? insight.spend / salary * 100 : 0;
   const warning = spendRate > 75 ? '높음' : spendRate > 60 ? '주의' : '안정';
   return {
@@ -192,7 +227,24 @@ function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
 }
 
 function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced' }) {
-  const scored = PRODUCTS.map((p) => {
+  const snapshot = getRuntimeSnapshot();
+  const products = snapshot.products || PRODUCTS;
+  const sim = snapshot.sim || SIM;
+  const user = snapshot.user || USER;
+  if (!products.length) {
+    const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
+    const simulation = simulate(monthly, sim);
+    return {
+      products: [],
+      monthly,
+      simulation,
+      top: null,
+      summary: '아직 연결된 금융상품 데이터가 없어요. 상품 API 또는 jaybis.realData의 products 배열이 들어오면 가입 조건과 우선순위를 계산할 수 있어요.',
+      nextChips: ['예산부터 설계해줘', '소비 진단해줘', '데이터 연결 방법 알려줘'],
+    };
+  }
+
+  const scored = products.map((p) => {
     let eligible = true;
     const reasons = [];
     if (age < 19 || age > 34) {
@@ -223,8 +275,8 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
     };
   }).sort((a, b) => a.roadmapRank - b.roadmapRank);
 
-  const monthly = Math.min(Math.max(monthlySavingsCapacity, SIM.minMonthly), SIM.maxMonthly);
-  const simulation = simulate(monthly);
+  const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
+  const simulation = simulate(monthly, sim);
   const top = scored.find((p) => p.eligible) || scored[0];
 
   return {
@@ -232,16 +284,19 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
     monthly,
     simulation,
     top,
-    summary: `${USER.greeting}님 조건이면 ${top.name}을 1순위로 볼게요. 월 ${manwon(monthly)}원씩 넣으면 5년 뒤 예상 수령액은 ${won(simulation.total)} 정도예요.`,
+    summary: `${user.greeting}님 조건이면 ${top.name}을 1순위로 볼게요. 월 ${manwon(monthly)}원씩 넣으면 5년 뒤 예상 수령액은 ${won(simulation.total)} 정도예요.`,
     nextChips: [`${top.name}가 왜 1순위야?`, '월 얼마씩 넣어야 해?', '비과세가 뭐야?'],
   };
 }
 
 function coachProductContext({ productId = 'doyak', concept, userQuestion = '', userLevel = 'beginner' }) {
-  const product = PRODUCTS.find((p) => p.id === productId) || PRODUCTS[0];
+  const products = getRuntimeSnapshot().products || PRODUCTS;
+  const product = products.find((p) => p.id === productId) || products[0] || { id: 'unknown', name: '해당 상품', why: '' };
   const q = `${concept || ''} ${userQuestion}`;
   let title = '추천 이유';
-  let explanation = `${product.name}은 지금 가입 가능성과 혜택이 커서 추천 우선순위가 높아요. 핵심은 내 돈을 오래 묶는 대신 금리, 세금 혜택, 정부 지원을 함께 받는 구조예요.`;
+  let explanation = products.length
+    ? `${product.name}은 지금 가입 가능성과 혜택이 커서 추천 우선순위가 높아요. 핵심은 내 돈을 오래 묶는 대신 금리, 세금 혜택, 정부 지원을 함께 받는 구조예요.`
+    : '아직 연결된 상품 데이터가 없어 특정 상품 기준의 코칭은 제한돼요. 상품 데이터가 들어오면 금리, 세제 혜택, 가입 조건을 함께 설명할 수 있어요.';
 
   if (/비과세|세금/.test(q)) {
     title = '비과세';
@@ -268,13 +323,17 @@ function coachProductContext({ productId = 'doyak', concept, userQuestion = '', 
 }
 
 function selectJaybisToolCall(text, context = {}) {
+  const snapshot = getRuntimeSnapshot();
+  const user = snapshot.user || USER;
+  const budget = snapshot.budget || BUDGET;
+  const sim = snapshot.sim || SIM;
   const t = text.replace(/\s/g, '');
   const amount = extractWonAmount(text);
   if (/(첫월급|월급|예산|50\/30\/20|503020)/.test(t)) {
     return {
       name: 'first_salary_budget_design',
       arguments: {
-        monthlySalary: amount || context.monthlySalary || BUDGET.salary,
+        monthlySalary: amount || context.monthlySalary || budget.salary,
         budgetRule: /빡세|많이모|저축많/.test(t) ? 'aggressive_saving' : '50_30_20',
       },
     };
@@ -284,7 +343,7 @@ function selectJaybisToolCall(text, context = {}) {
       name: 'mydata_spending_diagnosis',
       arguments: {
         source: /수기|직접|입력/.test(t) ? 'manual' : 'mydata',
-        monthlySalary: amount || context.monthlySalary || BUDGET.salary,
+        monthlySalary: amount || context.monthlySalary || budget.salary,
       },
     };
   }
@@ -302,10 +361,10 @@ function selectJaybisToolCall(text, context = {}) {
     return {
       name: 'recommend_youth_financial_products',
       arguments: {
-        age: context.age || USER.age,
-        annualIncome: context.annualIncome || (BUDGET.salary * 12),
+        age: context.age || user.age,
+        annualIncome: context.annualIncome || (budget.salary * 12),
         isHomeless: context.isHomeless ?? true,
-        monthlySavingsCapacity: amount || SIM.defaultMonthly,
+        monthlySavingsCapacity: amount || sim.defaultMonthly,
         priority: /집|주택|청약/.test(t) ? 'housing' : /세금|비과세/.test(t) ? 'tax_free' : 'balanced',
       },
     };
@@ -353,7 +412,10 @@ function buildJaybisOpenAIInput(messages = [], context = {}) {
     {
       role: 'system',
       content: [
-        JAYBIS_SYSTEM_PROMPT,
+        buildJaybisSystemPrompt([
+          ...(context.extraPrompts || []),
+          TONE_PROMPTS[context.tone] || '',
+        ]),
         context.userName ? `사용자 이름은 ${context.userName}다.` : '',
         context.age ? `사용자 나이는 ${context.age}세다.` : '',
         context.monthlySalary ? `현재 참고 가능한 월급 정보는 ${won(context.monthlySalary)}다.` : '',
@@ -413,7 +475,60 @@ async function createJaybisOpenAIResponse(input, { signal } = {}) {
   return response.json();
 }
 
+async function runJaybisSupabaseAgent(messages, context = {}, { signal } = {}) {
+  const supabaseUrl = (window.SUPABASE_URL || '').replace(/\/$/, '');
+  const anonKey = window.SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  const dataId = window.SUPABASE_DATA_ID || import.meta.env.VITE_SUPABASE_DATA_ID || 'default';
+  if (!USE_SUPABASE_AGENT || !supabaseUrl || !anonKey || !SUPABASE_AGENT_FUNCTION) {
+    return { configured: false };
+  }
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/${SUPABASE_AGENT_FUNCTION}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify({ messages, context, dataId }),
+  });
+
+  const raw = await response.text();
+  let payload = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch (err) {}
+
+  if (!response.ok) {
+    SUPABASE_AGENT_LAST_ERROR = `Supabase Agent 오류 (${response.status}): ${payload?.error || raw || response.statusText}`;
+    return { configured: false, error: SUPABASE_AGENT_LAST_ERROR };
+  }
+
+  SUPABASE_AGENT_LAST_ERROR = '';
+  return {
+    configured: true,
+    text: payload.text || '',
+    usedSupabaseAgent: true,
+  };
+}
+
 async function runJaybisOpenAIConversation(messages, context = {}, { signal } = {}) {
+  const edge = await runJaybisSupabaseAgent(messages, context, { signal }).catch((error) => ({
+    configured: false,
+    error: error?.message || String(error),
+  }));
+  if (edge.configured) {
+    return {
+      configured: true,
+      usedSupabaseAgent: true,
+      usedTool: false,
+      text: edge.text,
+      toolCall: null,
+      result: null,
+    };
+  }
+
   if (!OPENAI_CONFIGURED) {
     return { configured: false, usedTool: false, text: '', toolCall: null, result: null };
   }
@@ -469,6 +584,8 @@ async function runJaybisOpenAIConversation(messages, context = {}, { signal } = 
 }
 
 function getJaybisOpenAIConfigStatus() {
+  if (USE_SUPABASE_AGENT && window.SUPABASE_URL && !SUPABASE_AGENT_LAST_ERROR) return `Supabase Agent · ${SUPABASE_AGENT_FUNCTION}`;
+  if (SUPABASE_AGENT_LAST_ERROR && !OPENAI_CONFIGURED) return SUPABASE_AGENT_LAST_ERROR;
   if (!OPENAI_CONFIGURED) return 'OpenAI 미연결';
   if (OPENAI_LAST_ERROR) return `OpenAI 오류 · ${OPENAI_LAST_ERROR}`;
   return `OpenAI 연결됨 · ${OPENAI_MODEL}`;
@@ -483,15 +600,21 @@ function getJaybisOpenAIStatusDetail() {
     configured: OPENAI_CONFIGURED,
     model: OPENAI_MODEL,
     lastError: OPENAI_LAST_ERROR,
+    supabaseAgentFunction: SUPABASE_AGENT_FUNCTION,
+    supabaseAgentLastError: SUPABASE_AGENT_LAST_ERROR,
     status: getJaybisOpenAIConfigStatus(),
   };
 }
 
 Object.assign(window, {
   JAYBIS_AI_TOOLS,
+  JAYBIS_SYSTEM_PROMPT,
+  JAYBIS_MARKDOWN_STYLE_PROMPT,
+  buildJaybisSystemPrompt,
   STARTER_FEATURE_CHIPS,
   OPENAI_MODEL,
   OPENAI_CONFIGURED,
+  SUPABASE_AGENT_FUNCTION,
   getJaybisOpenAIConfigStatus,
   getJaybisOpenAIKeyState,
   getJaybisOpenAIStatusDetail,

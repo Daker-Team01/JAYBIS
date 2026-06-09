@@ -4,11 +4,13 @@ import { runPensionAgent, resetPensionAgent } from './pensionAgent';
 import { analyzeRetirementIncome } from './pensionMock';
 
 export default function Senior({ seniorMode, setSeniorMode }) {
+  const [settings] = window.useAppSettings();
   const [messages, setMessages] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const formatCurrency = (value) => Number(value || 0).toLocaleString('ko-KR');
 
   const speakResponse = (text) => {
+    if (!settings.voiceGuide) return;
     setIsSpeaking(true);
     try {
       if (voice && typeof voice.speak === 'function') {

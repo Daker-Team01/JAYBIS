@@ -159,7 +159,7 @@ export function analyzeRetirementIncome({ monthlyPension = 0, monthlyExpense = 0
     inputs: { monthlyPension: pension, monthlyExpense: expense, assets: totalAssets, age: currentAge, lifeExpectancy: endAge },
     pensionLookup: {
       monthlyPension: pension,
-      source: '사용자 입력 또는 더미 연금 조회 결과',
+      source: '사용자 입력 또는 연결된 연금 조회 결과',
     },
     expenseComparison: {
       monthlyExpense: expense,

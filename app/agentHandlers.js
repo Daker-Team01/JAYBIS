@@ -1,4 +1,4 @@
-import { analyzeRetirementIncome } from './pensionMock';
+import { analyzeRetirementIncome } from './pensionAnalysis';
 
 export async function handleIntent(text = '') {
   const t = (text || '').toLowerCase();
