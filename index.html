@@ -220,6 +220,20 @@ input,textarea{ font-family:inherit; }
 .bubble{ max-width:78%; padding:12px 15px; border-radius:18px; font-size:14.5px; line-height:1.5; }
 .bubble-ai{ background:var(--card); border:1px solid var(--line); border-bottom-left-radius:6px; color:var(--slate-900); box-shadow:var(--shadow-sm); }
 .bubble-me{ background:var(--teal-600); color:#fff; border-bottom-right-radius:6px; align-self:flex-end; }
+/* 마크다운 버블 */
+.md-bubble{ max-width:86%; }
+.md-bubble p{ margin:0 0 6px; }
+.md-bubble p:last-child{ margin-bottom:0; }
+.md-bubble h1,.md-bubble h2,.md-bubble h3{ font-weight:800; color:var(--teal-800); margin:8px 0 4px; line-height:1.3; }
+.md-bubble h1{ font-size:15px; }
+.md-bubble h2{ font-size:14px; }
+.md-bubble h3{ font-size:13px; }
+.md-bubble ul,.md-bubble ol{ margin:4px 0 6px; padding-left:18px; }
+.md-bubble li{ margin-bottom:3px; }
+.md-bubble strong{ font-weight:800; color:var(--teal-700); }
+.md-bubble em{ font-style:italic; color:var(--slate-600); }
+.md-bubble code{ font-size:12.5px; background:var(--teal-50); border:1px solid var(--teal-100); border-radius:5px; padding:1px 5px; color:var(--teal-800); }
+.md-bubble br{ display:block; margin:4px 0; content:''; }
 .tool-line{
   display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--slate-500);
   padding:7px 12px; background:var(--teal-50); border-radius:11px; border:1px solid var(--teal-100);

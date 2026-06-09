@@ -4,7 +4,7 @@
    ========================================================================= */
 
 const {
-  USER, BUDGET, PRODUCTS, SIM, DUMMY_TRANSACTIONS,
+  USER, BUDGET, PRODUCTS, SIM, TRANSACTIONS,
   analyzeCashflow, simulate, won, manwon, pct,
 } = window;
 
@@ -128,7 +128,7 @@ const STARTER_FEATURE_CHIPS = [
   '마이데이터로 소비 진단해줘',
   '수기로 소비 입력할래',
   '청년 금융상품 추천해줘',
-  '청년도약계좌가 왜 좋아?',
+  '추천 상품이 왜 좋아?',
 ];
 
 const JAYBIS_SYSTEM_PROMPT = [
@@ -161,8 +161,10 @@ function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '
     { key: 'want', label: '여유비', ratio: ratios.want, amount: Math.round(salary * ratios.want / 100) },
     { key: 'save', label: '저축·투자', ratio: ratios.save, amount: Math.round(salary * ratios.save / 100) },
   ];
-  const fixedPressure = fixedCost ? fixedCost / salary * 100 : BUDGET.buckets[0].used / BUDGET.salary * 100;
-  const emergencyMonthly = Math.max(100000, Math.round(salary * 0.12 / 10000) * 10000);
+  const fixedPressure = salary
+    ? (fixedCost ? fixedCost / salary * 100 : (BUDGET.buckets?.[0]?.used || 0) / salary * 100)
+    : 0;
+  const emergencyMonthly = salary ? Math.max(100000, Math.round(salary * 0.12 / 10000) * 10000) : 0;
 
   return {
     salary,
@@ -176,7 +178,7 @@ function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '
 }
 
 function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
-  const insight = analyzeCashflow(transactions?.length ? transactions : DUMMY_TRANSACTIONS);
+  const insight = analyzeCashflow(transactions?.length ? transactions : TRANSACTIONS);
   const salary = monthlySalary || insight.income || BUDGET.salary;
   const spendRate = salary ? insight.spend / salary * 100 : 0;
   const warning = spendRate > 75 ? '높음' : spendRate > 60 ? '주의' : '안정';
@@ -192,6 +194,19 @@ function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
 }
 
 function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced' }) {
+  if (!PRODUCTS.length) {
+    const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, SIM.minMonthly), SIM.maxMonthly);
+    const simulation = simulate(monthly);
+    return {
+      products: [],
+      monthly,
+      simulation,
+      top: null,
+      summary: '아직 연결된 금융상품 데이터가 없어요. 상품 API 또는 jaybis.realData의 products 배열이 들어오면 가입 조건과 우선순위를 계산할 수 있어요.',
+      nextChips: ['예산부터 설계해줘', '소비 진단해줘', '데이터 연결 방법 알려줘'],
+    };
+  }
+
   const scored = PRODUCTS.map((p) => {
     let eligible = true;
     const reasons = [];
@@ -223,7 +238,7 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
     };
   }).sort((a, b) => a.roadmapRank - b.roadmapRank);
 
-  const monthly = Math.min(Math.max(monthlySavingsCapacity, SIM.minMonthly), SIM.maxMonthly);
+  const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, SIM.minMonthly), SIM.maxMonthly);
   const simulation = simulate(monthly);
   const top = scored.find((p) => p.eligible) || scored[0];
 
@@ -238,10 +253,12 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
 }
 
 function coachProductContext({ productId = 'doyak', concept, userQuestion = '', userLevel = 'beginner' }) {
-  const product = PRODUCTS.find((p) => p.id === productId) || PRODUCTS[0];
+  const product = PRODUCTS.find((p) => p.id === productId) || PRODUCTS[0] || { id: 'unknown', name: '해당 상품', why: '' };
   const q = `${concept || ''} ${userQuestion}`;
   let title = '추천 이유';
-  let explanation = `${product.name}은 지금 가입 가능성과 혜택이 커서 추천 우선순위가 높아요. 핵심은 내 돈을 오래 묶는 대신 금리, 세금 혜택, 정부 지원을 함께 받는 구조예요.`;
+  let explanation = PRODUCTS.length
+    ? `${product.name}은 지금 가입 가능성과 혜택이 커서 추천 우선순위가 높아요. 핵심은 내 돈을 오래 묶는 대신 금리, 세금 혜택, 정부 지원을 함께 받는 구조예요.`
+    : '아직 연결된 상품 데이터가 없어 특정 상품 기준의 코칭은 제한돼요. 상품 데이터가 들어오면 금리, 세제 혜택, 가입 조건을 함께 설명할 수 있어요.';
 
   if (/비과세|세금/.test(q)) {
     title = '비과세';
