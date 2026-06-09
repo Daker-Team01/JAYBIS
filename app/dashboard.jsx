@@ -459,6 +459,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       const remote = await runJaybisOpenAIConversation(nextMsgs, {
         userName: USER?.name,
         age: USER?.age,
+        tone: settings?.tone,
         monthlySalary: ASSETS?.cashflow?.income,
         annualIncome: ASSETS?.cashflow?.income ? ASSETS.cashflow.income * 12 : undefined,
         isHomeless: true,

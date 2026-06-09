@@ -82,6 +82,7 @@ function Chat({ onClose, seed }) {
       const remote = await runJaybisOpenAIConversation(nextMsgs, {
         userName: USER?.name,
         age: USER?.age,
+        tone: settings?.tone,
         monthlySalary: BUDGET?.salary,
         annualIncome: BUDGET?.salary ? BUDGET.salary * 12 : undefined,
         isHomeless: true,

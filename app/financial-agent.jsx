@@ -151,6 +151,12 @@ const JAYBIS_MARKDOWN_STYLE_PROMPT = [
   '불필요한 인사말, 긴 서론, 코드블록은 쓰지 않는다.',
 ].join(' ');
 
+const TONE_PROMPTS = {
+  friendly: '말투는 따뜻하고 친근하게, 마치 오랜 친구가 곁에서 도와주는 느낌으로 대화한다. 사용자의 상황에 공감하는 말을 먼저 하고, "같이 해봐요", "걱정 마세요", "잘 하고 계세요", "진짜 잘 하셨어요"처럼 응원과 안심을 자연스럽게 녹인다. 딱딱하거나 사무적인 표현, 어려운 금융 용어는 쓰지 않고, 쉽고 부드러운 말로 풀어서 설명한다. 문장 끝에 따뜻한 여운이 남도록 마무리한다.',
+  formal:   '표준적인 존댓말을 사용하여 정중하고 신뢰감 있게 안내한다. 과도한 감정 표현 없이 필요한 정보를 명확하고 차분하게 전달한다.',
+  concise:  '최대한 짧고 핵심만 전달한다. 인사·공감·부연 설명은 모두 생략한다. 모든 답변은 불렛·번호 목록·표 형식으로만 구성하고, 산문형 문장은 쓰지 않는다.',
+};
+
 function buildJaybisSystemPrompt(extraPrompts = []) {
   return [
     JAYBIS_SYSTEM_PROMPT,
@@ -403,7 +409,10 @@ function buildJaybisOpenAIInput(messages = [], context = {}) {
     {
       role: 'system',
       content: [
-        buildJaybisSystemPrompt(context.extraPrompts),
+        buildJaybisSystemPrompt([
+          ...(context.extraPrompts || []),
+          TONE_PROMPTS[context.tone] || '',
+        ]),
         context.userName ? `사용자 이름은 ${context.userName}다.` : '',
         context.age ? `사용자 나이는 ${context.age}세다.` : '',
         context.monthlySalary ? `현재 참고 가능한 월급 정보는 ${won(context.monthlySalary)}다.` : '',
