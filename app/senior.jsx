@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useVoiceAgent } from './voiceAgent';
-import { handleIntent } from './agentHandlers';
-import { analyzeRetirementIncome } from './pensionAnalysis';
+import { runPensionAgent, resetPensionAgent } from './pensionAgent';
+import { analyzeRetirementIncome } from './pensionMock';
 
 export default function Senior({ seniorMode, setSeniorMode }) {
   const [settings] = window.useAppSettings();
@@ -12,10 +12,8 @@ export default function Senior({ seniorMode, setSeniorMode }) {
   const speakResponse = (text) => {
     if (!settings.voiceGuide) return;
     setIsSpeaking(true);
-    // Prefer agent-provided speak if available, but use robust fallback
     try {
       if (voice && typeof voice.speak === 'function') {
-        // call agent hook speak (may use speechSynthesis internally)
         voice.speak(text);
       } else if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(text);
@@ -32,17 +30,14 @@ export default function Senior({ seniorMode, setSeniorMode }) {
       console.error('TTS error', e);
     }
 
-    // Clear speaking state when actual speech ends, fallback to timeout
     if ('speechSynthesis' in window) {
       const onEnd = () => {
         setIsSpeaking(false);
         window.speechSynthesis.removeEventListener('end', onEnd);
         window.speechSynthesis.removeEventListener('error', onEnd);
       };
-      // Some browsers fire events on utterance rather than speechSynthesis; add short timeout fallback
       window.speechSynthesis.addEventListener('end', onEnd);
       window.speechSynthesis.addEventListener('error', onEnd);
-      // safety fallback
       window.setTimeout(() => setIsSpeaking(false), 6000);
     } else {
       window.setTimeout(() => setIsSpeaking(false), 1800);
@@ -53,16 +48,31 @@ export default function Senior({ seniorMode, setSeniorMode }) {
     onResult: async (text) => {
       if (!text || !text.trim()) return;
       setMessages((current) => [...current, { from: 'user', text }]);
-      const result = await handleIntent(text);
-      setMessages((current) => [...current, { from: 'agent', text: result.message }]);
-      speakResponse(result.message);
+      setMessages((current) => [...current, { from: 'agent', text: '⏳ 분석 중...', loading: true }]);
+      try {
+        const result = await runPensionAgent(text);
+        setMessages((current) => {
+          const next = [...current];
+          const idx = next.findLastIndex((m) => m.loading);
+          if (idx !== -1) next[idx] = { from: 'agent', text: result.message };
+          return next;
+        });
+        speakResponse(result.message);
+      } catch (err) {
+        const errMsg = err?.message?.includes('API 키') ? err.message : '잠시 문제가 생겼어요. 다시 말씀해 주세요.';
+        setMessages((current) => {
+          const next = [...current];
+          const idx = next.findLastIndex((m) => m.loading);
+          if (idx !== -1) next[idx] = { from: 'agent', text: errMsg };
+          return next;
+        });
+      }
     },
   });
 
   const messagesRef = useRef(null);
 
   useEffect(() => {
-    // auto-scroll conversation to bottom when messages update
     try {
       if (messagesRef.current) {
         messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
@@ -70,20 +80,35 @@ export default function Senior({ seniorMode, setSeniorMode }) {
     } catch (e) {}
   }, [messages]);
 
-  const runSample = () => {
-    const sample = '내 연금으로 월 생활비 얼마나 가능해?';
+  const runSample = async () => {
+    const sample = '월 연금 150만원, 생활비 130만원, 자산 5천만원, 나이 67세인데 괜찮을까요?';
     setMessages((current) => [...current, { from: 'user', text: sample }]);
-    handleIntent(sample).then((result) => {
-      setMessages((current) => [...current, { from: 'agent', text: result.message }]);
+    setMessages((current) => [...current, { from: 'agent', text: '⏳ 분석 중...', loading: true }]);
+    try {
+      const result = await runPensionAgent(sample);
+      setMessages((current) => {
+        const next = [...current];
+        const idx = next.findLastIndex((m) => m.loading);
+        if (idx !== -1) next[idx] = { from: 'agent', text: result.message };
+        return next;
+      });
       speakResponse(result.message);
-    });
+    } catch (err) {
+      const errMsg = err?.message?.includes('API 키') ? err.message : '잠시 문제가 생겼어요. 다시 시도해 주세요.';
+      setMessages((current) => {
+        const next = [...current];
+        const idx = next.findLastIndex((m) => m.loading);
+        if (idx !== -1) next[idx] = { from: 'agent', text: errMsg };
+        return next;
+      });
+    }
   };
 
   // Pension diagnosis form state
-  const [monthlyPension, setMonthlyPension] = useState(1500000);
-  const [monthlyExpense, setMonthlyExpense] = useState(1300000);
-  const [assets, setAssets] = useState(50000000);
-  const [age, setAge] = useState(67);
+  const [monthlyPension, setMonthlyPension] = useState('');
+  const [monthlyExpense, setMonthlyExpense] = useState();
+  const [assets, setAssets] = useState('');
+  const [age, setAge] = useState('');
   const [diagnosis, setDiagnosis] = useState(null);
 
   const applyPreset = (preset) => {
@@ -193,7 +218,13 @@ export default function Senior({ seniorMode, setSeniorMode }) {
         <div className="card" style={{ padding: 16, maxHeight: 240, overflowY: 'auto', marginBottom: 12 }} ref={messagesRef}>
           <div className="between" style={{ marginBottom: 10 }}>
             <b style={{ fontSize: 15.5 }}>대화 기록</b>
-            <span className="muted" style={{ fontSize: 12.5 }}>{messages.length}개 메시지</span>
+            <button
+              onClick={() => { setMessages([]); resetPensionAgent(); }}
+              className="pill"
+              style={{ fontSize: 11.5, background: 'var(--bg)', border: '1px solid var(--line)', cursor: 'pointer' }}
+            >
+              대화 초기화
+            </button>
           </div>
 
           {messages.length === 0 ? (
@@ -214,7 +245,7 @@ export default function Senior({ seniorMode, setSeniorMode }) {
                     wordWrap: 'break-word',
                     fontSize: 15,
                     lineHeight: 1.55,
-                    color: 'var(--ink)',
+                    color: m.loading ? 'var(--slate-400)' : 'var(--ink)',
                   }}
                 >
                   {m.text}
@@ -262,7 +293,7 @@ export default function Senior({ seniorMode, setSeniorMode }) {
 
           <div style={{ display:'flex', gap:10 }}>
             <button onClick={calculatePension} className="btn btn-primary" style={{ flex:1, height:44 }}>계산하기</button>
-            <button onClick={() => { setDiagnosis(null); setMonthlyPension(1500000); setMonthlyExpense(1300000); }} className="btn btn-line" style={{ flex:1, height:44 }}>초기화</button>
+            <button onClick={() => { setDiagnosis(null); setMonthlyPension(''); setMonthlyExpense(''); setAssets(''); setAge(''); }} className="btn btn-line" style={{ flex:1, height:44 }}>초기화</button>
           </div>
         </div>
 
@@ -298,6 +329,7 @@ export default function Senior({ seniorMode, setSeniorMode }) {
                 </div>
               ))}
             </div>
+
           </div>
         )}
 
@@ -306,14 +338,12 @@ export default function Senior({ seniorMode, setSeniorMode }) {
             🔊 답변을 읽는 중이에요...
           </div>
         )}
-        
-        
+
       </div>
     </div>
   );
 }
 
-// register for legacy main.jsx usage
 if (typeof window !== 'undefined') {
   window.Senior = Senior;
 }

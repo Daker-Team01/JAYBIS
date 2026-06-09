@@ -121,7 +121,7 @@
           <div style={{ marginTop:20, ...stagger(2) }}>
             <SectionLabel>접근성 & 보호</SectionLabel>
             <div className="card" style={{ padding:'4px 18px' }}>
-              <SettingRow icon="eye" tone="#0d9488" title="시니어 모드" sub="큰 글씨 22px · 쉬운 설명 · WCAG AAA"
+              <SettingRow icon="eye" tone="#0d9488" title="시니어 모드" sub="큰 글씨 · 쉬운 설명 · 음성 인식"
                 on={senior} onToggle={toggleSenior} />
               <SettingRow icon="voice" tone="#0ea5e9" title="음성 안내 (TTS)" sub="경고·진단을 음성으로 읽어줘요"
                 on={voice} onToggle={toggleVoice} />
