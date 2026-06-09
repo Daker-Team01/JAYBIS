@@ -34,6 +34,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
   const [cards, setCards] = useState(buildFeatureCards(null, null));
   const [pendingAction, setPendingAction] = useState(null);
   const scrollRef = useRef(null);
+  const lastAiMessageIdRef = useRef(null);
   const persistedMsgsRef = useRef(JSON.stringify(msgs));
   const composingRef = useRef(false);
   const lastSubmitRef = useRef({ text: '', at: 0 });
@@ -41,7 +42,17 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const lastAi = [...msgs].reverse().find((m) => m.who === 'ai');
+    if (lastAi && lastAi.id !== lastAiMessageIdRef.current) {
+      lastAiMessageIdRef.current = lastAi.id;
+      requestAnimationFrame(() => {
+        const node = el.querySelector(`[data-message-id="${lastAi.id}"]`);
+        if (node) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      });
+      return;
+    }
+    if (busy) el.scrollTop = el.scrollHeight;
   }, [msgs, busy]);
 
   useEffect(() => {
@@ -555,7 +566,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       >
         <section className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 12px' }}>
           <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 2 }}>
-            {msgs.map((m) => <Message key={m.id} m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} />)}
+            {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} /></div>)}
             {busy && <TypingBubble />}
           </div>
 

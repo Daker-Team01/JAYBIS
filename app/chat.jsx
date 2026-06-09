@@ -23,12 +23,23 @@ function Chat({ onClose, seed }) {
   const [input, setInput] = useState('');
   const [status, setStatus] = useState(getJaybisOpenAIConfigStatus());
   const scrollRef = useRef(null);
+  const lastAiMessageIdRef = useRef(null);
   const persistedMsgsRef = useRef(JSON.stringify(msgs));
   const nid = () => createJaybisMessageId();
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const lastAi = [...msgs].reverse().find((m) => m.who === 'ai');
+    if (lastAi && lastAi.id !== lastAiMessageIdRef.current) {
+      lastAiMessageIdRef.current = lastAi.id;
+      requestAnimationFrame(() => {
+        const node = el.querySelector(`[data-message-id="${lastAi.id}"]`);
+        if (node) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      });
+      return;
+    }
+    if (busy) el.scrollTop = el.scrollHeight;
   }, [msgs, busy]);
 
   useEffect(() => {
@@ -142,7 +153,7 @@ function Chat({ onClose, seed }) {
       </div>
 
       <div ref={scrollRef} className="scroll" style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {msgs.map((m) => <Message key={m.id} m={m} onChip={respond} />)}
+        {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} /></div>)}
         {busy && <TypingBubble />}
         <div style={{ height: 4 }} />
       </div>

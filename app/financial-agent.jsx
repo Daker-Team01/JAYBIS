@@ -12,7 +12,10 @@ const {
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
 const OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4.1-mini';
 const OPENAI_CONFIGURED = Boolean(OPENAI_API_KEY);
+const SUPABASE_AGENT_FUNCTION = import.meta.env.VITE_SUPABASE_AGENT_FUNCTION || 'jaybis-agent';
+const USE_SUPABASE_AGENT = import.meta.env.VITE_USE_SUPABASE_AGENT !== 'false';
 let OPENAI_LAST_ERROR = '';
+let SUPABASE_AGENT_LAST_ERROR = '';
 
 const JAYBIS_AI_TOOLS = [
   {
@@ -472,7 +475,60 @@ async function createJaybisOpenAIResponse(input, { signal } = {}) {
   return response.json();
 }
 
+async function runJaybisSupabaseAgent(messages, context = {}, { signal } = {}) {
+  const supabaseUrl = (window.SUPABASE_URL || '').replace(/\/$/, '');
+  const anonKey = window.SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  const dataId = window.SUPABASE_DATA_ID || import.meta.env.VITE_SUPABASE_DATA_ID || 'default';
+  if (!USE_SUPABASE_AGENT || !supabaseUrl || !anonKey || !SUPABASE_AGENT_FUNCTION) {
+    return { configured: false };
+  }
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/${SUPABASE_AGENT_FUNCTION}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify({ messages, context, dataId }),
+  });
+
+  const raw = await response.text();
+  let payload = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch (err) {}
+
+  if (!response.ok) {
+    SUPABASE_AGENT_LAST_ERROR = `Supabase Agent 오류 (${response.status}): ${payload?.error || raw || response.statusText}`;
+    return { configured: false, error: SUPABASE_AGENT_LAST_ERROR };
+  }
+
+  SUPABASE_AGENT_LAST_ERROR = '';
+  return {
+    configured: true,
+    text: payload.text || '',
+    usedSupabaseAgent: true,
+  };
+}
+
 async function runJaybisOpenAIConversation(messages, context = {}, { signal } = {}) {
+  const edge = await runJaybisSupabaseAgent(messages, context, { signal }).catch((error) => ({
+    configured: false,
+    error: error?.message || String(error),
+  }));
+  if (edge.configured) {
+    return {
+      configured: true,
+      usedSupabaseAgent: true,
+      usedTool: false,
+      text: edge.text,
+      toolCall: null,
+      result: null,
+    };
+  }
+
   if (!OPENAI_CONFIGURED) {
     return { configured: false, usedTool: false, text: '', toolCall: null, result: null };
   }
@@ -528,6 +584,8 @@ async function runJaybisOpenAIConversation(messages, context = {}, { signal } = 
 }
 
 function getJaybisOpenAIConfigStatus() {
+  if (USE_SUPABASE_AGENT && window.SUPABASE_URL && !SUPABASE_AGENT_LAST_ERROR) return `Supabase Agent · ${SUPABASE_AGENT_FUNCTION}`;
+  if (SUPABASE_AGENT_LAST_ERROR && !OPENAI_CONFIGURED) return SUPABASE_AGENT_LAST_ERROR;
   if (!OPENAI_CONFIGURED) return 'OpenAI 미연결';
   if (OPENAI_LAST_ERROR) return `OpenAI 오류 · ${OPENAI_LAST_ERROR}`;
   return `OpenAI 연결됨 · ${OPENAI_MODEL}`;
@@ -542,6 +600,8 @@ function getJaybisOpenAIStatusDetail() {
     configured: OPENAI_CONFIGURED,
     model: OPENAI_MODEL,
     lastError: OPENAI_LAST_ERROR,
+    supabaseAgentFunction: SUPABASE_AGENT_FUNCTION,
+    supabaseAgentLastError: SUPABASE_AGENT_LAST_ERROR,
     status: getJaybisOpenAIConfigStatus(),
   };
 }
@@ -554,6 +614,7 @@ Object.assign(window, {
   STARTER_FEATURE_CHIPS,
   OPENAI_MODEL,
   OPENAI_CONFIGURED,
+  SUPABASE_AGENT_FUNCTION,
   getJaybisOpenAIConfigStatus,
   getJaybisOpenAIKeyState,
   getJaybisOpenAIStatusDetail,
