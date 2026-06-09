@@ -321,9 +321,9 @@ function Toggle({ on, onClick }) {
 /* ---- 3. AI 자산진단 진행 -------------------------------------------------- */
 function OnbAnalyzing({ onDone }) {
   const steps = [
-    { t:'계좌·카드 거래내역 수집', d:'전북은행 · JB카드' },
+    { t:'계좌·카드 거래내역 수집', d:'연결된 금융기관' },
     { t:'순자산 · 부채비율 계산', d:'자산 조회 Tool 호출' },
-    { t:'또래 벤치마크 비교', d:'27세 · 수도권 통계' },
+    { t:'또래 벤치마크 비교', d:'연령 · 지역 기준 통계' },
     { t:'생애주기 유형 분류', d:'소득·지출 패턴 분석' },
   ];
   const [done, setDone] = useState(0);
@@ -378,7 +378,7 @@ function OnbAnalyzing({ onDone }) {
 
 /* ---- 5. 유형 분류 결과 ---------------------------------------------------- */
 function OnbResult({ profile, onNext }) {
-  const name = profile?.name || '도윤';
+  const name = profile?.name || '사용자';
   return (
     <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column' }}>
       <div className="scroll" style={{ paddingTop:47 }}>

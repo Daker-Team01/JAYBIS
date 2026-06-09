@@ -10,6 +10,7 @@ const {
 function Products({ nav, toast }) {
   const [monthly, setMonthly] = useState(SIM.defaultMonthly);
   const r = simulate(monthly);
+  const hasProducts = PRODUCTS.length > 0;
 
   return (
     <div className="scroll screen-anim">
@@ -23,8 +24,12 @@ function Products({ nav, toast }) {
               <Icon name="sparkF" size={20} color="var(--teal-300)" />
             </span>
             <div>
-              <div style={{ fontSize:14.5, fontWeight:800, color:'var(--ink)' }}>가입 가능한 청년 상품 3개</div>
-              <div className="muted" style={{ fontSize:12.5, marginTop:2 }}>나이 · 소득 · 무주택 조건으로 필터링했어요</div>
+              <div style={{ fontSize:14.5, fontWeight:800, color:'var(--ink)' }}>
+                {hasProducts ? `가입 가능한 상품 ${PRODUCTS.length}개` : '상품 데이터 대기 중'}
+              </div>
+              <div className="muted" style={{ fontSize:12.5, marginTop:2 }}>
+                {hasProducts ? '나이 · 소득 · 조건으로 필터링했어요' : 'products 데이터가 연결되면 로드맵을 계산합니다'}
+              </div>
             </div>
           </div>
         </div>
@@ -36,14 +41,21 @@ function Products({ nav, toast }) {
             {/* 세로 라인 */}
             <div style={{ position:'absolute', left:22, top:14, bottom:24, width:2, background:'var(--line)' }} />
             <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
-              {PRODUCTS.map((p,i) => (
+              {hasProducts ? PRODUCTS.map((p,i) => (
                 <div key={p.id} style={{ position:'relative', paddingLeft:46 }}>
                   <span style={{ position:'absolute', left:8, top:18, width:28, height:28, borderRadius:'50%',
                     background:p.tone, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
                     fontSize:13, fontWeight:800, zIndex:1, boxShadow:'0 2px 6px '+p.tone+'66' }}>{p.rank}</span>
                   <ProductCard p={p} onApply={() => toast(p.name + ' 가입 신청을 시작했어요')} />
                 </div>
-              ))}
+              )) : (
+                <div className="card" style={{ padding:'16px 18px', marginLeft:0 }}>
+                  <b style={{ fontSize:14.5, color:'var(--ink)' }}>연결할 상품이 없습니다</b>
+                  <p className="muted" style={{ fontSize:12.5, lineHeight:1.55, marginTop:6 }}>
+                    API 응답 또는 localStorage jaybis.realData에 products 배열을 넣으면 이 영역에 실제 상품이 표시됩니다.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -58,7 +70,9 @@ function Products({ nav, toast }) {
                   <Icon name="piggy" size={18} color="var(--teal-300)" />
                   <b style={{ fontSize:13.5, fontWeight:700 }}>{SIM.productName}</b>
                 </div>
-                <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>5년 만기 · 비과세</span>
+                <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>
+                  {SIM.termMonths}개월 {SIM.taxFreeNote ? `· ${SIM.taxFreeNote}` : ''}
+                </span>
               </div>
               <div style={{ textAlign:'center', marginTop:16 }}>
                 <div style={{ fontSize:12, color:'rgba(255,255,255,.7)', fontWeight:600 }}>5년 뒤 예상 수령액</div>
@@ -96,7 +110,7 @@ function Products({ nav, toast }) {
                 </div>
               ))}
 
-              <button onClick={() => toast('청년도약계좌 가입을 시작했어요')} className="btn btn-primary" style={{ marginTop:16 }}>
+              <button onClick={() => toast(SIM.productName + ' 가입을 시작했어요')} className="btn btn-primary" style={{ marginTop:16 }}>
                 이 조건으로 가입하기
               </button>
             </div>
@@ -107,7 +121,7 @@ function Products({ nav, toast }) {
         <button onClick={() => nav('chat')} className="card row" style={{ marginTop:14, ...stagger(3), gap:11, width:'100%', textAlign:'left', background:'var(--teal-50)', border:'1px solid var(--teal-100)' }}>
           <Icon name="chat" size={20} color="var(--teal-700)" />
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:13.5, fontWeight:700, color:'var(--teal-800)' }}>&quot;청년도약계좌가 왜 1순위야?&quot;</div>
+            <div style={{ fontSize:13.5, fontWeight:700, color:'var(--teal-800)' }}>&quot;이 상품이 왜 1순위야?&quot;</div>
             <div style={{ fontSize:12, color:'var(--teal-700)', marginTop:2 }}>제이비스가 추천 이유를 쉽게 코칭해줘요</div>
           </div>
           <Icon name="chevR" size={17} color="var(--teal-600)" />

@@ -12,18 +12,34 @@
   function Profile({ nav, toast }) {
     const [settings] = useAppSettings();
     const [senior, setSenior] = useState(Boolean(settings?.seniorMode));
-    const [voice, setVoice] = useState(true);
-    const [guard, setGuard] = useState(true);
+    const [voice, setVoice] = useState(Boolean(settings?.voiceGuide));
+    const [guard, setGuard] = useState(Boolean(settings?.fraudProtection));
 
     useEffect(() => {
       setSenior(Boolean(settings?.seniorMode));
-    }, [settings?.seniorMode]);
+      setVoice(Boolean(settings?.voiceGuide));
+      setGuard(Boolean(settings?.fraudProtection));
+    }, [settings?.seniorMode, settings?.voiceGuide, settings?.fraudProtection]);
 
     const toggleSenior = () => {
       const next = !senior;
       setSenior(next);
       saveAppSettings({ seniorMode: next });
       toast(next ? '시니어 모드를 켰어요' : '시니어 모드를 해제했어요');
+    };
+
+    const toggleVoice = () => {
+      const next = !voice;
+      setVoice(next);
+      saveAppSettings({ voiceGuide: next });
+      toast(next ? '음성 안내를 켰어요' : '음성 안내를 껐어요');
+    };
+
+    const toggleGuard = () => {
+      const next = !guard;
+      setGuard(next);
+      saveAppSettings({ fraudProtection: next });
+      toast(next ? '보이스피싱 보호를 켰어요' : '보이스피싱 보호를 껐어요');
     };
 
     return (
@@ -35,14 +51,16 @@
           <div className="card" style={{ ...stagger(0), background:'var(--teal-900)', color:'#fff', padding:'18px 18px' }}>
             <div className="row" style={{ gap:14 }}>
               <span style={{ width:54, height:54, borderRadius:18, background:'linear-gradient(160deg,var(--teal-400),var(--teal-700))', display:'flex', alignItems:'center', justifyContent:'center', flex:'0 0 auto' }}>
-                <b style={{ fontSize:21, fontWeight:800 }}>도</b>
+                <b style={{ fontSize:21, fontWeight:800 }}>{(USER.name || '사').slice(0, 1)}</b>
               </span>
               <div style={{ flex:1 }}>
                 <div className="row" style={{ gap:7 }}>
                   <b style={{ fontSize:18, fontWeight:800 }}>{USER.name}</b>
-                  <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>{USER.track}</span>
+                  {USER.track && <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>{USER.track}</span>}
                 </div>
-                <div style={{ fontSize:12.5, color:'rgba(255,255,255,.72)', marginTop:3 }}>{USER.age}세 · {USER.job} · 함께한 지 {USER.joinedMonths}개월</div>
+                <div style={{ fontSize:12.5, color:'rgba(255,255,255,.72)', marginTop:3 }}>
+                  {[USER.age ? `${USER.age}세` : null, USER.job, USER.joinedMonths ? `함께한 지 ${USER.joinedMonths}개월` : null].filter(Boolean).join(' · ') || '프로필 데이터 대기 중'}
+                </div>
               </div>
             </div>
           </div>
@@ -77,9 +95,9 @@
               <SettingRow icon="eye" tone="#0d9488" title="시니어 모드" sub="큰 글씨 22px · 쉬운 설명 · WCAG AAA"
                 on={senior} onToggle={toggleSenior} />
               <SettingRow icon="voice" tone="#0ea5e9" title="음성 안내 (TTS)" sub="경고·진단을 음성으로 읽어줘요"
-                on={voice} onToggle={() => setVoice(v=>!v)} />
+                on={voice} onToggle={toggleVoice} />
               <SettingRow icon="shield" tone="#16a34a" title="보이스피싱 보호" sub="이상거래 자동 감지 · 위험 시 이체 지연"
-                on={guard} onToggle={() => setGuard(g=>!g)} last />
+                on={guard} onToggle={toggleGuard} last />
             </div>
           </div>
 
@@ -101,7 +119,7 @@
 
           {/* 연동 기관 */}
           <div style={{ marginTop:20, ...stagger(4) }}>
-            <SectionLabel action="관리" onAction={() => toast('마이데이터 연동 관리')}>연결된 기관 6곳</SectionLabel>
+            <SectionLabel action="관리" onAction={() => toast('마이데이터 연동 관리')}>연결된 기관 {MYDATA_INSTITUTIONS.length}곳</SectionLabel>
             <div className="card" style={{ padding:'14px 16px' }}>
               <div className="row" style={{ gap:8, flexWrap:'wrap' }}>
                 {MYDATA_INSTITUTIONS.map(inst => (

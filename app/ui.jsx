@@ -167,7 +167,62 @@ function useToast() {
 /* 화면 진입 stagger 적용 헬퍼 */
 function stagger(i, base = 0.04) { return { animationDelay: (base + i * 0.06) + 's' }; }
 
+/* ---- 마크다운 렌더러 -------------------------------------------------------- */
+function parseMd(text) {
+  const lines = text.split('\n');
+  const out = [];
+  let ulBuf = [], olBuf = [];
+
+  const flushUl = () => {
+    if (!ulBuf.length) return;
+    out.push(`<ul>${ulBuf.join('')}</ul>`);
+    ulBuf = [];
+  };
+  const flushOl = () => {
+    if (!olBuf.length) return;
+    out.push(`<ol>${olBuf.join('')}</ol>`);
+    olBuf = [];
+  };
+
+  const inline = (s) =>
+    s
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`(.+?)`/g, '<code>$1</code>');
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+
+    if (/^### /.test(line)) { flushUl(); flushOl(); out.push(`<h3>${inline(line.slice(4))}</h3>`); continue; }
+    if (/^## /.test(line))  { flushUl(); flushOl(); out.push(`<h2>${inline(line.slice(3))}</h2>`); continue; }
+    if (/^# /.test(line))   { flushUl(); flushOl(); out.push(`<h1>${inline(line.slice(2))}</h1>`); continue; }
+
+    const ulMatch = line.match(/^[-*] (.+)/);
+    if (ulMatch) { flushOl(); ulBuf.push(`<li>${inline(ulMatch[1])}</li>`); continue; }
+
+    const olMatch = line.match(/^\d+\. (.+)/);
+    if (olMatch) { flushUl(); olBuf.push(`<li>${inline(olMatch[1])}</li>`); continue; }
+
+    flushUl(); flushOl();
+    if (line.trim() === '') { out.push('<br>'); continue; }
+    out.push(`<p>${inline(line)}</p>`);
+  }
+
+  flushUl(); flushOl();
+  return out.join('');
+}
+
+function MarkdownBubble({ text }) {
+  return (
+    <div
+      className="bubble bubble-ai md-bubble"
+      dangerouslySetInnerHTML={{ __html: parseMd(text) }}
+    />
+  );
+}
+
 Object.assign(window, {
   Icon, Logo, StatusBar, Donut, TopBar, SectionLabel, Bar, useToast, stagger,
+  MarkdownBubble,
   useState, useEffect, useRef,
 });

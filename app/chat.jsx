@@ -6,29 +6,53 @@
 
 const {
   useState, useEffect, useRef, useAppSettings, summarizeEasy, speakText,
-  StatusBar, Icon, Bar, Donut,
-  STARTER_FEATURE_CHIPS, selectJaybisToolCall, executeJaybisToolCall, getJaybisToolSequence,
+  StatusBar, Icon, Bar, Donut, MarkdownBubble,
+  loadJaybisChatMessages, saveJaybisChatMessages, createJaybisMessageId,
+  selectJaybisToolCall, executeJaybisToolCall, getJaybisToolSequence,
   runJaybisOpenAIConversation, getJaybisOpenAIConfigStatus,
   AI_DIAGNOSIS, ASSETS, CASHFLOW_INSIGHT, FRAUD_INSIGHT, PENSION_PLAN,
-  PRODUCTS, USER, BUDGET, won, manwon, pct,
+  PRODUCTS, USER, BUDGET, SIM, simulate, won, manwon, pct,
 } = window;
 
 function Chat({ onClose, seed }) {
   const [settings] = useAppSettings();
-  const [msgs, setMsgs] = useState([
-    { id: 'g1', who: 'ai', kind: 'text', text: '안녕하세요 도윤님, 금융비서 제이비스예요. 첫 월급 예산, 소비 진단, 청년 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.' },
-  ]);
+  const [msgs, setMsgs] = useState(() => loadJaybisChatMessages([
+    { id: 'g1', who: 'ai', kind: 'text', text: `안녕하세요 ${USER.greeting || USER.name}님, 금융비서 제이비스예요. 예산, 소비 진단, 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.` },
+  ]));
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState('');
   const [status, setStatus] = useState(getJaybisOpenAIConfigStatus());
   const scrollRef = useRef(null);
-  const idRef = useRef(2);
-  const nid = () => 'm' + (idRef.current++);
+  const persistedMsgsRef = useRef(JSON.stringify(msgs));
+  const nid = () => createJaybisMessageId();
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs, busy]);
+
+  useEffect(() => {
+    const serialized = JSON.stringify(msgs);
+    if (persistedMsgsRef.current === serialized) return;
+    persistedMsgsRef.current = serialized;
+    saveJaybisChatMessages(msgs);
+  }, [msgs]);
+
+  useEffect(() => {
+    const syncMessages = (event) => {
+      const next = event?.detail || loadJaybisChatMessages();
+      const serialized = JSON.stringify(next);
+      if (persistedMsgsRef.current === serialized) return;
+      persistedMsgsRef.current = serialized;
+      setMsgs(next);
+    };
+    window.addEventListener('jaybis-chat-changed', syncMessages);
+    window.addEventListener('storage', syncMessages);
+    return () => {
+      window.removeEventListener('jaybis-chat-changed', syncMessages);
+      window.removeEventListener('storage', syncMessages);
+    };
+  }, []);
 
   const push = (m) => setMsgs((prev) => [...prev, { id: nid(), ...m }]);
 
@@ -47,7 +71,6 @@ function Chat({ onClose, seed }) {
     if (result.kind !== 'featureMenuResult') {
       push({ who: 'ai', kind: result.kind, data: result.data });
     }
-    push({ who: 'ai', kind: 'chips', items: result.data.nextChips || STARTER_FEATURE_CHIPS });
   };
 
   async function respond(text) {
@@ -76,8 +99,6 @@ function Chat({ onClose, seed }) {
 
         if (remote.text) emitAi(remote.text);
 
-        const chips = remote.result?.data?.nextChips || STARTER_FEATURE_CHIPS;
-        push({ who: 'ai', kind: 'chips', items: chips });
         return;
       }
       emitLocalResponse(text);
@@ -100,7 +121,7 @@ function Chat({ onClose, seed }) {
     <div style={{ position: 'absolute', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', background: 'var(--bg)', animation: 'screenIn .3s ease' }}>
       <StatusBar dark={false} />
 
-      <div style={{ paddingTop: 47, background: 'linear-gradient(160deg,var(--teal-700),var(--teal-600))', color: '#fff', flexShrink: 0 }}>
+      <div style={{ paddingTop: 86, background: 'linear-gradient(160deg,var(--teal-700),var(--teal-600))', color: '#fff', flexShrink: 0 }}>
         <div className="between" style={{ height: 54, padding: '0 14px' }}>
           <div className="row" style={{ gap: 10 }}>
             <span style={{ width: 38, height: 38, borderRadius: 12, background: 'rgba(255,255,255,.16)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -124,14 +145,6 @@ function Chat({ onClose, seed }) {
         {busy && <TypingBubble />}
         <div style={{ height: 4 }} />
       </div>
-
-      {msgs.length <= 1 && (
-        <div style={{ padding: '0 16px 10px', display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
-          {STARTER_FEATURE_CHIPS.map((q, i) => (
-            <button key={i} onClick={() => respond(q)} className="pill" style={{ background: 'var(--card)', border: '1px solid var(--teal-100)', color: 'var(--teal-700)', fontSize: 12.5, padding: '9px 13px' }}>{q}</button>
-          ))}
-        </div>
-      )}
 
       <div style={{ padding: '10px 14px 26px', background: 'var(--card)', borderTop: '1px solid var(--line)', flexShrink: 0 }}>
         <div className="row" style={{ gap: 9 }}>
@@ -160,16 +173,9 @@ function Message({ m, onChip }) {
     </div>
   );
   if (m.kind === 'text') return (
-    <div style={{ display: 'flex', justifyContent: 'flex-start' }}><div className="bubble bubble-ai">{m.text}</div></div>
+    <div style={{ display: 'flex', justifyContent: 'flex-start' }}><MarkdownBubble text={m.text} /></div>
   );
   if (m.kind === 'tools') return <ToolSequence seq={m.seq} />;
-  if (m.kind === 'chips') return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingLeft: 2 }}>
-      {m.items.map((q, i) => (
-        <button key={i} onClick={() => onChip(q)} className="pill" style={{ background: 'var(--card)', border: '1px solid var(--teal-100)', color: 'var(--teal-700)', fontSize: 12.5, padding: '9px 13px' }}>{q}</button>
-      ))}
-    </div>
-  );
   if (m.kind === 'spendResult') return <SpendResultCard />;
   if (m.kind === 'productResult') return <ChatProductCard />;
   if (m.kind === 'assetResult') return <ChatAssetCard />;
@@ -216,31 +222,28 @@ function TypingBubble() {
 }
 
 function SpendResultCard() {
+  const categories = CASHFLOW_INSIGHT.topCategories || [];
+  const max = Math.max(1, ...categories.map((x) => x.value));
   return (
     <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
       <div className="between" style={{ marginBottom: 11 }}>
         <b style={{ fontSize: 14, fontWeight: 800, color: 'var(--ink)' }}>이번 달 소비 진단</b>
-        <span className="pill pill-warn" style={{ fontSize: 10.5 }}>주의 1건</span>
+        <span className={'pill ' + (CASHFLOW_INSIGHT.risk === '주의' ? 'pill-warn' : 'pill-pos')} style={{ fontSize: 10.5 }}>{CASHFLOW_INSIGHT.risk}</span>
       </div>
-      {[
-        { l: '외식·배달', v: 290000, peer: 210000, warn: true },
-        { l: '쇼핑', v: 268000, peer: 240000 },
-        { l: '구독·OTT', v: 48000, peer: 22000, warn: true },
-      ].map((x, i) => {
-        const max = Math.max(x.v, x.peer) * 1.1;
-        return (
-          <div key={i} style={{ padding: '8px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
-            <div className="between" style={{ marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{x.l}</span>
-              <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: x.warn ? 'var(--neg)' : 'var(--ink)' }}>{won(x.v)}</span>
-            </div>
-            <Bar value={x.v / max * 100} color={x.warn ? 'var(--warn)' : 'var(--teal-600)'} height={6} />
+      {categories.length ? categories.slice(0, 3).map((x, i) => (
+        <div key={x.label} style={{ padding: '8px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
+          <div className="between" style={{ marginBottom: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{x.label}</span>
+            <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)' }}>{won(x.value)}</span>
           </div>
-        );
-      })}
+          <Bar value={x.value / max * 100} color="var(--teal-600)" height={6} />
+        </div>
+      )) : (
+        <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>연결된 거래내역이 아직 없어 소비 카테고리를 계산할 수 없어요.</p>
+      )}
       <div style={{ marginTop: 12, padding: '11px 13px', background: 'var(--teal-50)', borderRadius: 11 }}>
         <p style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--teal-800)', fontWeight: 500 }}>
-          외식·배달이 또래보다 <b>38% 많아요</b>. 주 2회로 줄이고 OTT를 1개로 정리하면 <b>월 98,500원</b>을 아낄 수 있어요.
+          절약 가능액은 현재 거래 기준 <b>{won(CASHFLOW_INSIGHT.savingsPotential)}</b>으로 계산됐어요.
         </p>
       </div>
     </div>
@@ -249,6 +252,18 @@ function SpendResultCard() {
 
 function ChatProductCard() {
   const p = PRODUCTS[0];
+  if (!p) {
+    return (
+      <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
+        <b style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>상품 데이터 대기 중</b>
+        <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, marginTop: 7 }}>
+          실제 상품 API 또는 jaybis.realData의 products 배열이 연결되면 추천 카드를 표시합니다.
+        </p>
+      </div>
+    );
+  }
+  const monthly = SIM.defaultMonthly || Math.min(SIM.maxMonthly || 0, p.maxMonthly || 0);
+  const result = simulate(monthly);
   return (
     <div className="card" style={{ maxWidth: '90%', animation: 'pop .3s ease', boxShadow: 'var(--shadow-md)' }}>
       <div className="between">
@@ -266,8 +281,8 @@ function ChatProductCard() {
       </div>
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 13, padding: '12px 0 0', borderTop: '1px solid var(--line)' }}>
         <div style={{ textAlign: 'center', flex: 1 }}>
-          <div className="muted" style={{ fontSize: 11 }}>월 70만원 × 5년</div>
-          <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: 'var(--teal-600)', marginTop: 3 }}>약 5,055만원</div>
+          <div className="muted" style={{ fontSize: 11 }}>월 {manwon(monthly)}원 × {SIM.termMonths}개월</div>
+          <div className="tnum" style={{ fontSize: 15, fontWeight: 800, color: 'var(--teal-600)', marginTop: 3 }}>{won(result.total)}</div>
         </div>
       </div>
     </div>

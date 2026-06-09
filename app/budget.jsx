@@ -4,18 +4,19 @@
 
 const {
   useState, TopBar, SectionLabel, Icon, Bar, stagger,
-  BUDGET, won, manwon,
+  USER, BUDGET, useJaybisRuntimeData, won, manwon,
 } = window;
 
 function Budget({ nav, toast }) {
-  const b = BUDGET;
+  const [snapshot] = useJaybisRuntimeData();
+  const b = snapshot?.budget || BUDGET;
   const [tab, setTab] = useState('all'); // all | need | want | save
   const cats = tab === 'all' ? b.categories : b.categories.filter(c => c.bucket === tab);
 
   return (
     <div className="scroll screen-anim">
       <TopBar title="예산 설계" right={
-        <span className="pill pill-teal" style={{ fontSize:11.5 }}>4월</span>
+        <span className="pill pill-teal" style={{ fontSize:11.5 }}>실데이터</span>
       } />
 
       <div style={{ padding:'2px 18px 26px' }} className="stagger">
@@ -60,7 +61,7 @@ function Budget({ nav, toast }) {
         <div style={{ marginTop:20, ...stagger(1) }}>
           <SectionLabel>제이비스가 찾은 절약 포인트</SectionLabel>
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {b.alerts.map((al,i) => (
+            {b.alerts.length ? b.alerts.map((al,i) => (
               <div key={i} className="card" style={{ borderLeft:'3px solid var(--warn)', padding:'14px 16px' }}>
                 <div className="between" style={{ marginBottom:6 }}>
                   <div className="row" style={{ gap:8 }}>
@@ -75,15 +76,21 @@ function Budget({ nav, toast }) {
                   이 절약 적용하기
                 </button>
               </div>
-            ))}
+            )) : (
+              <div className="card" style={{ padding:'14px 16px' }}>
+                <p className="muted" style={{ fontSize:13, lineHeight:1.55 }}>
+                  거래내역과 예산 데이터가 연결되면 절약 포인트를 계산합니다.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
         {/* ---- 또래 비교 ---- */}
         <div style={{ marginTop:22, ...stagger(2) }}>
-          <SectionLabel>27세 또래와 비교</SectionLabel>
+          <SectionLabel>{USER.age ? `${USER.age}세 또래와 비교` : '또래와 비교'}</SectionLabel>
           <div className="card">
-            {b.peers.map((p,i) => {
+            {b.peers.length ? b.peers.map((p,i) => {
               const unit = p.unit === '%';
               const meV = unit ? p.me : p.me;
               const peerV = unit ? p.peer : p.peer;
@@ -112,7 +119,11 @@ function Budget({ nav, toast }) {
                   </div>
                 </div>
               );
-            })}
+            }) : (
+              <p className="muted" style={{ fontSize:13, lineHeight:1.55, padding:'12px 0' }}>
+                비교 데이터가 연결되면 이 영역에 또래 대비 소비/저축 지표를 표시합니다.
+              </p>
+            )}
           </div>
         </div>
 
@@ -125,8 +136,8 @@ function Budget({ nav, toast }) {
             ))}
           </div>
           <div className="card" style={{ padding:'6px 16px' }}>
-            {cats.map((c,i) => {
-              const ratio = c.used / c.plan * 100;
+            {cats.length ? cats.map((c,i) => {
+              const ratio = c.plan ? c.used / c.plan * 100 : 0;
               const over = c.used > c.plan;
               return (
                 <div key={i} className="lrow" style={{ padding:'13px 0', display:'block', borderTop: i? '1px solid var(--line)':'none' }}>
@@ -151,7 +162,11 @@ function Budget({ nav, toast }) {
                   <Bar value={ratio} color={over?'var(--warn)':'var(--teal-600)'} height={7} />
                 </div>
               );
-            })}
+            }) : (
+              <p className="muted" style={{ fontSize:13, lineHeight:1.55, padding:'14px 0' }}>
+                카테고리별 지출 데이터가 아직 없습니다.
+              </p>
+            )}
           </div>
         </div>
 

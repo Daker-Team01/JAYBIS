@@ -4,16 +4,18 @@
 
 const {
   ReactDOM, useState, useEffect, useToast, useAppSettings, StatusBar, Onboarding,
-  Home, Budget, Products, Profile, Chat, Icon,
+  Home, Jaybis, Budget, Products, Profile, Icon,
+  loadOnboardingState, saveOnboardingState,
 } = window;
 
 function App() {
-  const [phase, setPhase] = useState('onboarding'); // onboarding | app
+  const initialOnboarding = loadOnboardingState();
+  const [phase, setPhase] = useState(initialOnboarding.completed ? 'app' : 'onboarding'); // onboarding | app
   const [settings, saveSettings] = useAppSettings();
   const [seniorMode, setSeniorMode] = useState(Boolean(settings?.seniorMode));
   const [tab, setTab] = useState('home');
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatSeed, setChatSeed] = useState(null);
+  const [jaybisSeed, setJaybisSeed] = useState(null);
+  const [onboardProfile, setOnboardProfile] = useState(initialOnboarding.profile || null);
   const [toastNode, toast] = useToast();
 
   useEffect(() => {
@@ -21,12 +23,20 @@ function App() {
   }, [settings?.seniorMode]);
 
   const nav = (target, seed) => {
-    if (target === 'chat') { setChatSeed(seed || null); setChatOpen(true); return; }
+    if (target === 'chat') { setJaybisSeed(seed || null); setTab('jaybis'); return; }
     setTab(target);
   };
 
   if (phase === 'onboarding') {
-    return <Onboarding onComplete={(_profile) => setPhase('app')} />;
+    return (
+      <Onboarding
+        onComplete={(profile) => {
+          saveOnboardingState(profile);
+          setOnboardProfile(profile || null);
+          setPhase('app');
+        }}
+      />
+    );
   }
 
   // 홈은 teal hero → 밝은 상태바, 나머지는 어두운 상태바
@@ -43,18 +53,17 @@ function App() {
     <div className="app">
       <StatusBar dark={statusDark} />
 
-      {tab === 'home'     && (window.Senior && seniorMode ? <window.Senior nav={nav} toast={toast} seniorMode={seniorMode} setSeniorMode={toggleSeniorMode} /> : <Home nav={nav} toast={toast} />)}
+      {tab === 'home'     && (window.Senior && seniorMode ? <window.Senior nav={nav} toast={toast} seniorMode={seniorMode} setSeniorMode={toggleSeniorMode} /> : <Home nav={nav} toast={toast} profile={onboardProfile} />)}
+      {tab === 'jaybis'   && <Jaybis nav={nav} toast={toast} seed={jaybisSeed} clearSeed={() => setJaybisSeed(null)} />}
       {tab === 'budget'   && <Budget   nav={nav} toast={toast} />}
       {tab === 'products' && <Products nav={nav} toast={toast} />}
       {tab === 'profile'  && <Profile  nav={nav} toast={toast} />}
 
       {toastNode}
 
-      <TabBar tab={tab} setTab={setTab} onChat={() => { setChatSeed(null); setChatOpen(true); }} />
+      <TabBar tab={tab} setTab={setTab} onChat={() => { setJaybisSeed(null); setTab('jaybis'); }} />
 
-      {chatOpen && <Chat seed={chatSeed} onClose={() => { setChatOpen(false); setChatSeed(null); }} />}
-
-      <div className={'home-indicator' + (chatOpen ? '' : '')}></div>
+      <div className="home-indicator"></div>
     </div>
   );
 }
