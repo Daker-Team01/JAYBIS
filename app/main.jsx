@@ -26,7 +26,7 @@ function App() {
   };
 
   if (phase === 'onboarding') {
-    return <Onboarding onComplete={() => setPhase('app')} />;
+    return <Onboarding onComplete={(_profile) => setPhase('app')} />;
   }
 
   // 홈은 teal hero → 밝은 상태바, 나머지는 어두운 상태바
