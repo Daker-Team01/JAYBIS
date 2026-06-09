@@ -6,7 +6,7 @@ import {
   analyzeRetirementIncome,
   diagnoseRetirementIncome,
   simulatePensionScenarios,
-} from './pensionMock';
+} from './pensionAnalysis';
 
 const analyzePensionTool = tool(
   async ({ monthlyPension, monthlyExpense, assets, age, lifeExpectancy }) => {

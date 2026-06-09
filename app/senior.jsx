@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useVoiceAgent } from './voiceAgent';
 import { runPensionAgent, resetPensionAgent } from './pensionAgent';
-import { analyzeRetirementIncome } from './pensionAnalysis.js';
+import { analyzeRetirementIncome } from './pensionAnalysis';
 
 export default function Senior({ seniorMode, setSeniorMode }) {
   const [settings] = window.useAppSettings();
