@@ -10,6 +10,7 @@ const {
 function Budget({ nav, toast }) {
   const [snapshot] = useJaybisRuntimeData();
   const b = snapshot?.budget || BUDGET;
+  const user = snapshot?.user || USER;
   const [tab, setTab] = useState('all'); // all | need | want | save
   const [inputMode, setInputMode] = useState(() => {
     const mode = window.__JAYBIS_BUDGET_INPUT_MODE || 'mydata';
@@ -173,7 +174,7 @@ function Budget({ nav, toast }) {
 
         {/* ---- 또래 비교 ---- */}
         <div style={{ marginTop:22, ...stagger(3) }}>
-          <SectionLabel>{USER.age ? `${USER.age}세 또래와 비교` : '또래와 비교'}</SectionLabel>
+          <SectionLabel>{user.age ? `${user.age}세 또래와 비교` : '또래와 비교'}</SectionLabel>
           <div className="card">
             {b.peers.length ? b.peers.map((p,i) => {
               const unit = p.unit === '%';

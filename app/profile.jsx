@@ -6,20 +6,30 @@
 
   const {
     useState, useEffect, TopBar, Icon, SectionLabel, Toggle, stagger, useAppSettings, saveAppSettings,
-    USER, MYDATA_INSTITUTIONS,
+    USER, MYDATA_INSTITUTIONS, useJaybisRuntimeData, loadOnboardingState, saveOnboardingState,
   } = window;
 
   function Profile({ nav, toast }) {
     const [settings] = useAppSettings();
+    const [snapshot, saveRuntimeData] = useJaybisRuntimeData();
+    const user = snapshot.user || USER;
     const [senior, setSenior] = useState(Boolean(settings?.seniorMode));
     const [voice, setVoice] = useState(Boolean(settings?.voiceGuide));
     const [guard, setGuard] = useState(Boolean(settings?.fraudProtection));
+    const [nickname, setNickname] = useState(user.name || '');
+    const [age, setAge] = useState(user.age || '');
+    const [editingProfile, setEditingProfile] = useState(false);
 
     useEffect(() => {
       setSenior(Boolean(settings?.seniorMode));
       setVoice(Boolean(settings?.voiceGuide));
       setGuard(Boolean(settings?.fraudProtection));
     }, [settings?.seniorMode, settings?.voiceGuide, settings?.fraudProtection]);
+
+    useEffect(() => {
+      setNickname(user.name || '');
+      setAge(user.age || '');
+    }, [user.name, user.age]);
 
     const toggleSenior = () => {
       const next = !senior;
@@ -42,6 +52,36 @@
       toast(next ? '보이스피싱 보호를 켰어요' : '보이스피싱 보호를 껐어요');
     };
 
+    const saveProfile = () => {
+      const nextName = nickname.trim() || '사용자';
+      const nextAge = Math.max(0, Math.floor(Number(age) || 0));
+      const onboarding = loadOnboardingState();
+      saveOnboardingState({
+        ...(onboarding.profile || {}),
+        name: nextName,
+        age: nextAge || '',
+      });
+      saveRuntimeData({
+        ...snapshot.raw,
+        user: {
+          ...(snapshot.raw.user || {}),
+          name: nextName,
+          greeting: nextName,
+          age: nextAge,
+        },
+      });
+      toast('프로필을 저장했어요');
+      setEditingProfile(false);
+    };
+
+    const cancelProfileEdit = () => {
+      setNickname(user.name || '');
+      setAge(user.age || '');
+      setEditingProfile(false);
+    };
+
+    const profileChanged = nickname.trim() !== (user.name || '') || String(age || '') !== String(user.age || '');
+
     return (
       <div className="scroll screen-anim">
         <TopBar title="MY" right={<Icon name="bell" size={20} color="var(--ink)" />} />
@@ -49,19 +89,56 @@
         <div style={{ padding:'2px 18px 26px' }} className="stagger">
           {/* 프로필 헤더 */}
           <div className="card" style={{ ...stagger(0), background:'var(--teal-900)', color:'#fff', padding:'18px 18px' }}>
-            <div className="row" style={{ gap:14 }}>
+            <div className="row" style={{ gap:14, alignItems: editingProfile ? 'flex-start' : 'center' }}>
               <span style={{ width:54, height:54, borderRadius:18, background:'linear-gradient(160deg,var(--teal-400),var(--teal-700))', display:'flex', alignItems:'center', justifyContent:'center', flex:'0 0 auto' }}>
-                <b style={{ fontSize:21, fontWeight:800 }}>{(USER.name || '사').slice(0, 1)}</b>
+                <b style={{ fontSize:21, fontWeight:800 }}>{(user.name || '사').slice(0, 1)}</b>
               </span>
-              <div style={{ flex:1 }}>
-                <div className="row" style={{ gap:7 }}>
-                  <b style={{ fontSize:18, fontWeight:800 }}>{USER.name}</b>
-                  {USER.track && <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>{USER.track}</span>}
-                </div>
-                <div style={{ fontSize:12.5, color:'rgba(255,255,255,.72)', marginTop:3 }}>
-                  {[USER.age ? `${USER.age}세` : null, USER.job, USER.joinedMonths ? `함께한 지 ${USER.joinedMonths}개월` : null].filter(Boolean).join(' · ') || '프로필 데이터 대기 중'}
-                </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                {editingProfile ? (
+                  <div style={{ display:'grid', gap:9 }}>
+                    <div style={{ display:'grid', gridTemplateColumns:'minmax(0, 132px) 64px', gap:7, alignItems:'end' }}>
+                      <ProfileInput label="닉네임" value={nickname} onChange={setNickname} placeholder="사용자" />
+                      <ProfileInput label="나이" value={age} onChange={setAge} type="number" placeholder="만 나이" />
+                    </div>
+                    <div className="row" style={{ gap:8 }}>
+                      <button
+                        onClick={saveProfile}
+                        disabled={!profileChanged}
+                        className="btn btn-primary"
+                        style={{ height:34, flex:1, fontSize:13, boxShadow:'none', opacity: profileChanged ? 1 : .45 }}
+                      >
+                        저장
+                      </button>
+                      <button
+                        onClick={cancelProfileEdit}
+                        className="btn btn-line"
+                        style={{ height:34, flex:1, fontSize:13, borderColor:'rgba(255,255,255,.25)', color:'#fff', background:'rgba(255,255,255,.08)' }}
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="row" style={{ gap:7 }}>
+                      <b style={{ fontSize:18, fontWeight:800 }}>{user.name}</b>
+                      {user.track && <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>{user.track}</span>}
+                    </div>
+                    <div style={{ fontSize:12.5, color:'rgba(255,255,255,.72)', marginTop:3 }}>
+                      {[user.age ? `${user.age}세` : null, user.job, user.joinedMonths ? `함께한 지 ${user.joinedMonths}개월` : null].filter(Boolean).join(' · ') || '프로필 데이터 대기 중'}
+                    </div>
+                  </>
+                )}
               </div>
+              {!editingProfile && (
+                <button
+                  onClick={() => setEditingProfile(true)}
+                  aria-label="프로필 수정"
+                  style={{ width:36, height:36, borderRadius:12, background:'rgba(255,255,255,.14)', display:'flex', alignItems:'center', justifyContent:'center', flex:'0 0 auto' }}
+                >
+                  <Icon name="gear" size={18} color="#fff" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -147,6 +224,34 @@
           </p>
         </div>
       </div>
+    );
+  }
+
+  function ProfileInput({ label, value, onChange, placeholder, type = 'text' }) {
+    return (
+      <label style={{ display:'grid', gap:6 }}>
+        <span style={{ fontSize:11.5, fontWeight:800, color:'rgba(255,255,255,.72)' }}>{label}</span>
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          min={type === 'number' ? 0 : undefined}
+          inputMode={type === 'number' ? 'numeric' : undefined}
+          style={{
+            height:34,
+            border:'1px solid rgba(255,255,255,.2)',
+            borderRadius:10,
+            padding:'0 9px',
+            outline:'none',
+            color:'#fff',
+            background:'rgba(255,255,255,.1)',
+            fontSize:13,
+            fontWeight:600,
+            minWidth:0,
+          }}
+        />
+      </label>
     );
   }
 
