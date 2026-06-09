@@ -5,6 +5,7 @@
 
 const {
   USER, BUDGET, PRODUCTS, SIM, TRANSACTIONS,
+  getRuntimeSnapshot,
   analyzeCashflow, simulate, won, manwon, pct,
 } = window;
 
@@ -140,6 +141,24 @@ const JAYBIS_SYSTEM_PROMPT = [
   '응답은 불필요하게 길지 않게, 실행 가능한 다음 행동을 포함해 마무리한다.',
 ].join(' ');
 
+const JAYBIS_MARKDOWN_STYLE_PROMPT = [
+  '출력은 항상 GitHub Flavored Markdown 형식으로 정리한다.',
+  '첫 줄은 상황에 맞는 이모지 1개와 굵은 한 줄 요약으로 시작하고, 본문은 짧은 문단과 bullet list를 섞어 읽기 쉽게 만든다.',
+  '이모지는 예산 💰, 소비 진단 📊, 저축 🐷, 경고 ⚠️, 다음 행동 ✅처럼 의미가 분명한 것만 섹션당 최대 1개 사용한다.',
+  '금액, 비율, 실행 항목처럼 중요한 값은 **굵게** 강조한다.',
+  '예산·소비·상품 비교처럼 항목이 3개 이상이면 표 대신 간결한 bullet list를 우선 사용한다.',
+  '사용자가 바로 누르거나 입력해야 하는 행동은 마지막에 `다음 행동`으로 1개만 제안한다.',
+  '불필요한 인사말, 긴 서론, 코드블록은 쓰지 않는다.',
+].join(' ');
+
+function buildJaybisSystemPrompt(extraPrompts = []) {
+  return [
+    JAYBIS_SYSTEM_PROMPT,
+    JAYBIS_MARKDOWN_STYLE_PROMPT,
+    ...extraPrompts,
+  ].filter(Boolean).join('\n\n');
+}
+
 function extractWonAmount(text) {
   const normalized = text.replace(/,/g, '').replace(/\s/g, '');
   const man = normalized.match(/(\d+(?:\.\d+)?)만원/);
@@ -150,7 +169,9 @@ function extractWonAmount(text) {
 }
 
 function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '비상금', budgetRule = '50_30_20' }) {
-  const salary = monthlySalary || BUDGET.salary;
+  const snapshot = getRuntimeSnapshot();
+  const budget = snapshot.budget || BUDGET;
+  const salary = monthlySalary || budget.salary;
   const ratios = budgetRule === 'aggressive_saving'
     ? { need: 45, want: 20, save: 35 }
     : budgetRule === 'starter_safe'
@@ -162,7 +183,7 @@ function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '
     { key: 'save', label: '저축·투자', ratio: ratios.save, amount: Math.round(salary * ratios.save / 100) },
   ];
   const fixedPressure = salary
-    ? (fixedCost ? fixedCost / salary * 100 : (BUDGET.buckets?.[0]?.used || 0) / salary * 100)
+    ? (fixedCost ? fixedCost / salary * 100 : (budget.buckets?.[0]?.used || 0) / salary * 100)
     : 0;
   const emergencyMonthly = salary ? Math.max(100000, Math.round(salary * 0.12 / 10000) * 10000) : 0;
 
@@ -178,8 +199,11 @@ function designFirstSalaryBudget({ monthlySalary, fixedCost = 0, savingsGoal = '
 }
 
 function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
-  const insight = analyzeCashflow(transactions?.length ? transactions : TRANSACTIONS);
-  const salary = monthlySalary || insight.income || BUDGET.salary;
+  const snapshot = getRuntimeSnapshot();
+  const budget = snapshot.budget || BUDGET;
+  const runtimeTransactions = snapshot.transactions || TRANSACTIONS;
+  const insight = analyzeCashflow(transactions?.length ? transactions : runtimeTransactions);
+  const salary = monthlySalary || insight.income || budget.salary;
   const spendRate = salary ? insight.spend / salary * 100 : 0;
   const warning = spendRate > 75 ? '높음' : spendRate > 60 ? '주의' : '안정';
   return {
@@ -194,9 +218,13 @@ function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
 }
 
 function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced' }) {
-  if (!PRODUCTS.length) {
-    const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, SIM.minMonthly), SIM.maxMonthly);
-    const simulation = simulate(monthly);
+  const snapshot = getRuntimeSnapshot();
+  const products = snapshot.products || PRODUCTS;
+  const sim = snapshot.sim || SIM;
+  const user = snapshot.user || USER;
+  if (!products.length) {
+    const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
+    const simulation = simulate(monthly, sim);
     return {
       products: [],
       monthly,
@@ -207,7 +235,7 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
     };
   }
 
-  const scored = PRODUCTS.map((p) => {
+  const scored = products.map((p) => {
     let eligible = true;
     const reasons = [];
     if (age < 19 || age > 34) {
@@ -238,8 +266,8 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
     };
   }).sort((a, b) => a.roadmapRank - b.roadmapRank);
 
-  const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, SIM.minMonthly), SIM.maxMonthly);
-  const simulation = simulate(monthly);
+  const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
+  const simulation = simulate(monthly, sim);
   const top = scored.find((p) => p.eligible) || scored[0];
 
   return {
@@ -247,16 +275,17 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
     monthly,
     simulation,
     top,
-    summary: `${USER.greeting}님 조건이면 ${top.name}을 1순위로 볼게요. 월 ${manwon(monthly)}원씩 넣으면 5년 뒤 예상 수령액은 ${won(simulation.total)} 정도예요.`,
+    summary: `${user.greeting}님 조건이면 ${top.name}을 1순위로 볼게요. 월 ${manwon(monthly)}원씩 넣으면 5년 뒤 예상 수령액은 ${won(simulation.total)} 정도예요.`,
     nextChips: [`${top.name}가 왜 1순위야?`, '월 얼마씩 넣어야 해?', '비과세가 뭐야?'],
   };
 }
 
 function coachProductContext({ productId = 'doyak', concept, userQuestion = '', userLevel = 'beginner' }) {
-  const product = PRODUCTS.find((p) => p.id === productId) || PRODUCTS[0] || { id: 'unknown', name: '해당 상품', why: '' };
+  const products = getRuntimeSnapshot().products || PRODUCTS;
+  const product = products.find((p) => p.id === productId) || products[0] || { id: 'unknown', name: '해당 상품', why: '' };
   const q = `${concept || ''} ${userQuestion}`;
   let title = '추천 이유';
-  let explanation = PRODUCTS.length
+  let explanation = products.length
     ? `${product.name}은 지금 가입 가능성과 혜택이 커서 추천 우선순위가 높아요. 핵심은 내 돈을 오래 묶는 대신 금리, 세금 혜택, 정부 지원을 함께 받는 구조예요.`
     : '아직 연결된 상품 데이터가 없어 특정 상품 기준의 코칭은 제한돼요. 상품 데이터가 들어오면 금리, 세제 혜택, 가입 조건을 함께 설명할 수 있어요.';
 
@@ -285,13 +314,17 @@ function coachProductContext({ productId = 'doyak', concept, userQuestion = '', 
 }
 
 function selectJaybisToolCall(text, context = {}) {
+  const snapshot = getRuntimeSnapshot();
+  const user = snapshot.user || USER;
+  const budget = snapshot.budget || BUDGET;
+  const sim = snapshot.sim || SIM;
   const t = text.replace(/\s/g, '');
   const amount = extractWonAmount(text);
   if (/(첫월급|월급|예산|50\/30\/20|503020)/.test(t)) {
     return {
       name: 'first_salary_budget_design',
       arguments: {
-        monthlySalary: amount || context.monthlySalary || BUDGET.salary,
+        monthlySalary: amount || context.monthlySalary || budget.salary,
         budgetRule: /빡세|많이모|저축많/.test(t) ? 'aggressive_saving' : '50_30_20',
       },
     };
@@ -301,7 +334,7 @@ function selectJaybisToolCall(text, context = {}) {
       name: 'mydata_spending_diagnosis',
       arguments: {
         source: /수기|직접|입력/.test(t) ? 'manual' : 'mydata',
-        monthlySalary: amount || context.monthlySalary || BUDGET.salary,
+        monthlySalary: amount || context.monthlySalary || budget.salary,
       },
     };
   }
@@ -319,10 +352,10 @@ function selectJaybisToolCall(text, context = {}) {
     return {
       name: 'recommend_youth_financial_products',
       arguments: {
-        age: context.age || USER.age,
-        annualIncome: context.annualIncome || (BUDGET.salary * 12),
+        age: context.age || user.age,
+        annualIncome: context.annualIncome || (budget.salary * 12),
         isHomeless: context.isHomeless ?? true,
-        monthlySavingsCapacity: amount || SIM.defaultMonthly,
+        monthlySavingsCapacity: amount || sim.defaultMonthly,
         priority: /집|주택|청약/.test(t) ? 'housing' : /세금|비과세/.test(t) ? 'tax_free' : 'balanced',
       },
     };
@@ -370,7 +403,7 @@ function buildJaybisOpenAIInput(messages = [], context = {}) {
     {
       role: 'system',
       content: [
-        JAYBIS_SYSTEM_PROMPT,
+        buildJaybisSystemPrompt(context.extraPrompts),
         context.userName ? `사용자 이름은 ${context.userName}다.` : '',
         context.age ? `사용자 나이는 ${context.age}세다.` : '',
         context.monthlySalary ? `현재 참고 가능한 월급 정보는 ${won(context.monthlySalary)}다.` : '',
@@ -506,6 +539,9 @@ function getJaybisOpenAIStatusDetail() {
 
 Object.assign(window, {
   JAYBIS_AI_TOOLS,
+  JAYBIS_SYSTEM_PROMPT,
+  JAYBIS_MARKDOWN_STYLE_PROMPT,
+  buildJaybisSystemPrompt,
   STARTER_FEATURE_CHIPS,
   OPENAI_MODEL,
   OPENAI_CONFIGURED,
