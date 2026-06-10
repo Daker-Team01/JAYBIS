@@ -8,6 +8,7 @@ const {
   USER, ASSETS, AI_DIAGNOSIS, STARTER_FEATURE_CHIPS,
   loadJaybisChatMessages, saveJaybisChatMessages, createJaybisMessageId,
   saveAppSettings, getRuntimeSnapshot, saveRuntimeData,
+  applyBudgetInsight,
   runJaybisOpenAIConversation, getJaybisOpenAIConfigStatus,
   selectJaybisToolCall, executeJaybisToolCall, getJaybisToolSequence,
   summarizeEasy, speakText, won, manwon, pct,
@@ -23,9 +24,10 @@ const FEATURE_CATALOG = {
 };
 
 function Jaybis({ nav, toast, seed, clearSeed }) {
+  const SCROLL_KEY = 'jaybis.chatScrollTop';
   const [settings] = window.useAppSettings();
   const [msgs, setMsgs] = useState(() => loadJaybisChatMessages([
-    { id: 'g1', who: 'ai', kind: 'text', text: `${USER.greeting || USER.name}님, 여기서 바로 이야기해요. 위는 대화, 아래는 지금 필요한 기능 카드예요.` },
+    { id: 'g1', who: 'ai', kind: 'text', text: `${USER.greeting || USER.name}님, 여기서 바로 이야기해요. 필요한 금융 기능을 대화로 바로 도와드릴게요.` },
   ]));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,12 +37,23 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
   const [pendingAction, setPendingAction] = useState(null);
   const scrollRef = useRef(null);
   const lastAiMessageIdRef = useRef(null);
+  const shouldAutoScrollRef = useRef(false);
   const persistedMsgsRef = useRef(JSON.stringify(msgs));
   const composingRef = useRef(false);
   const lastSubmitRef = useRef({ text: '', at: 0 });
   const nid = () => createJaybisMessageId();
 
   useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = Number(window.sessionStorage?.getItem(SCROLL_KEY) || 0);
+    requestAnimationFrame(() => {
+      el.scrollTop = saved;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
     const lastAi = [...msgs].reverse().find((m) => m.who === 'ai');
@@ -54,6 +67,14 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     }
     if (busy) el.scrollTop = el.scrollHeight;
   }, [msgs, busy]);
+
+  const rememberScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    try {
+      window.sessionStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+    } catch (err) {}
+  };
 
   useEffect(() => {
     const serialized = JSON.stringify(msgs);
@@ -113,14 +134,25 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     const need = data.buckets?.[0]?.amount || 0;
     const want = data.buckets?.[1]?.amount || 0;
     const save = data.buckets?.[2]?.amount || 0;
+    const details = data.expenseDetails || {};
+    const housing = Number(details.housing) || 0;
+    const telecomTransport = Number(details.telecomTransport) || 0;
+    const foodLiving = Number(details.foodLiving) || 0;
+    const wantLimit = Number(details.wantLimit) || 0;
+    const savingTargetAmount = Number(details.savingTargetAmount) || 0;
+    const fixedNeed = housing + telecomTransport + foodLiving;
+    const remainingNeed = Math.max(0, need - fixedNeed);
+    const remainingWant = Math.max(0, want - wantLimit);
+    const remainingSave = Math.max(0, save - savingTargetAmount);
     return [
-      { label: '주거·관리비', bucket: 'need', plan: Math.round(need * 0.42), icon: 'home' },
-      { label: '통신·교통', bucket: 'need', plan: Math.round(need * 0.18), icon: 'bus' },
-      { label: '식비·생활', bucket: 'need', plan: Math.round(need * 0.28), icon: 'cart' },
-      { label: '외식·취미', bucket: 'want', plan: Math.round(want * 0.45), icon: 'food' },
-      { label: '쇼핑·선물', bucket: 'want', plan: Math.round(want * 0.28), icon: 'bag' },
-      { label: '비상금', bucket: 'save', plan: Math.round(save * 0.55), icon: 'piggy' },
-      { label: '투자·자기계발', bucket: 'save', plan: Math.round(save * 0.35), icon: 'chart' },
+      { label: '주거·관리비', bucket: 'need', plan: housing || Math.round(need * 0.42), icon: 'home' },
+      { label: '통신·교통', bucket: 'need', plan: telecomTransport || Math.round(need * 0.18), icon: 'bus' },
+      { label: '식비·생활', bucket: 'need', plan: foodLiving || Math.round(need * 0.28), icon: 'cart' },
+      { label: '기타 필수비', bucket: 'need', plan: remainingNeed ? Math.round(remainingNeed) : 0, icon: 'bag' },
+      { label: '외식·취미', bucket: 'want', plan: wantLimit || Math.round(want * 0.45), icon: 'food' },
+      { label: '쇼핑·선물', bucket: 'want', plan: Math.round(remainingWant || want * 0.28), icon: 'bag' },
+      { label: data.savingsGoal || '비상금', bucket: 'save', plan: savingTargetAmount || Math.round(save * 0.55), icon: 'piggy' },
+      { label: '투자·자기계발', bucket: 'save', plan: Math.round(remainingSave || save * 0.35), icon: 'chart' },
     ].filter((item) => item.plan > 0);
   };
 
@@ -308,6 +340,13 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       setPendingAction(null);
       return true;
     }
+    if (action.type === 'applyBudgetInsight') {
+      applyBudgetInsight(action.data);
+      toast(`${action.data.categoryLabel || action.data.title} 한도를 반영했어요`);
+      emitAi(`${action.data.categoryLabel || action.data.title} 한도를 ${won(action.data.suggestedLimit || action.data.actionPayload?.limit || 0)}로 조정했어요. 예산 페이지에도 반영했습니다.`);
+      setPendingAction(null);
+      return true;
+    }
     if (action.type === 'openBudgetInput') {
       window.__JAYBIS_BUDGET_INPUT_MODE = action.mode;
       toast(action.mode === 'manual' ? '수기 입력으로 이동해요' : '마이데이터 연결로 이동해요');
@@ -343,6 +382,25 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         yesLabel: '이동',
         noLabel: '나중에',
       };
+    }
+    if (/(절약|한도|줄여|아껴|적용|반영)/i.test(t) && /(적용|반영|줄여|낮춰|해줘)/i.test(t)) {
+      const snapshot = getRuntimeSnapshot();
+      const alerts = snapshot.budget?.alerts || [];
+      const matched = alerts.find((alert) => (
+        (alert.categoryLabel && t.includes(alert.categoryLabel.replace(/\s/g, ''))) ||
+        (alert.category && t.includes(String(alert.category).replace(/\s/g, ''))) ||
+        (alert.bucket && t.includes(String(alert.bucket).replace(/\s/g, '')))
+      )) || alerts[0];
+      if (matched) {
+        return {
+          id: `insight-${Date.now()}`,
+          type: 'applyBudgetInsight',
+          data: matched,
+          confirmText: `${matched.title} 제안을 적용해 ${matched.categoryLabel || '해당 항목'} 한도를 ${won(matched.suggestedLimit || matched.actionPayload?.limit || 0)}로 조정할 수 있어요.`,
+          yesLabel: '적용',
+          noLabel: '취소',
+        };
+      }
     }
     if (wantsVoice && /(꺼|끄|off|중지|그만)/i.test(t)) {
       return {
@@ -387,6 +445,11 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       kind: 'budgetDesigner',
       salary,
       fixedCost: '',
+      housing: '',
+      telecomTransport: '',
+      foodLiving: '',
+      wantLimit: '',
+      savingTargetAmount: '',
       savingsGoal: '비상금',
       budgetRule: '50_30_20',
     });
@@ -408,9 +471,23 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     const seq = getJaybisToolSequence(toolCall.name);
     push({ who: 'ai', kind: 'tools', seq, toolCall });
     const result = executeJaybisToolCall(toolCall);
-    const recommendations = buildBudgetRecommendations(result.data);
-    const data = { ...result.data, recommendations };
-    emitAi(result.data.summary);
+    const expenseDetails = {
+      housing: Number(values.housing) || 0,
+      telecomTransport: Number(values.telecomTransport) || 0,
+      foodLiving: Number(values.foodLiving) || 0,
+      wantLimit: Number(values.wantLimit) || 0,
+      savingTargetAmount: Number(values.savingTargetAmount) || 0,
+    };
+    const fixedDetailTotal = expenseDetails.housing + expenseDetails.telecomTransport + expenseDetails.foodLiving;
+    const dataBase = {
+      ...result.data,
+      fixedCost: Number(values.fixedCost) || fixedDetailTotal,
+      expenseDetails,
+      savingsGoal: values.savingsGoal || result.data.savingsGoal,
+    };
+    const recommendations = buildBudgetRecommendations(dataBase);
+    const data = { ...dataBase, recommendations };
+    emitAi(`💰 **입력한 세부 항목으로 예산안을 나눴어요.**\n\n필수비 안에서는 주거·통신교통·식비를 먼저 고정하고, 남는 금액을 기타 필수비로 남겨뒀어요. 여유비와 저축 목표도 입력값을 우선 반영했습니다.`);
     push({ who: 'ai', kind: 'budgetPlanPreview', data, recommendations });
     askToApplyBudgetPlan(data);
     setChips(result.data.nextChips || STARTER_FEATURE_CHIPS);
@@ -419,6 +496,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
 
   async function respond(text) {
     if (busy || !text?.trim()) return;
+    shouldAutoScrollRef.current = true;
     const prompt = text.trim();
     const now = Date.now();
     if (lastSubmitRef.current.text === prompt && now - lastSubmitRef.current.at < 450) return;
@@ -430,12 +508,14 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     try {
       if (pendingAction) {
         if (isCancelText(prompt)) {
+          shouldAutoScrollRef.current = true;
           resolveConfirmMessage(pendingAction.id, 'denied');
           setPendingAction(null);
           emitAi('알겠어요. 실행하지 않고 보류할게요.');
           return;
         }
         if (isConfirmText(prompt)) {
+          shouldAutoScrollRef.current = true;
           resolveConfirmMessage(pendingAction.id, 'approved');
           runConfirmedAction(pendingAction);
           return;
@@ -513,6 +593,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
   };
 
   const handleConfirmAction = (approved, actionId) => {
+    shouldAutoScrollRef.current = true;
     const storedAction = msgs.find((m) => m.kind === 'confirm' && m.actionId === actionId)?.action;
     const action = pendingAction?.id === actionId ? pendingAction : storedAction;
     if (!action) return;
@@ -549,7 +630,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
           <Logo size={23} mark />
           <div>
             <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--ink)' }}>{USER.name}님 홈</div>
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>대화는 위에서, 실행은 아래에서</div>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>JAYBIS가 무엇이든 도와드려요 </div>
           </div>
         </div>
         <span className="pill pill-teal" style={{ fontSize: 10.5 }}>{status}</span>
@@ -559,13 +640,11 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         style={{
           flex: 1,
           minHeight: 0,
-          display: 'grid',
-          gridTemplateRows: 'minmax(0, 1fr) 128px',
-          gap: 12,
+          display: 'flex',
         }}
       >
-        <section className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 12px' }}>
-          <div ref={scrollRef} className="scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 2 }}>
+        <section className="card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 12px' }}>
+          <div ref={scrollRef} onScroll={rememberScroll} className="scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 2 }}>
             {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} /></div>)}
             {busy && <TypingBubble />}
           </div>
@@ -601,37 +680,6 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
           </div>
         </section>
 
-        <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <div className="between" style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>
-                추천 기능
-              </div>
-              <div className="muted" style={{ fontSize: 11.5 }}>
-                지금 흐름에 맞춰 1개만 보여요
-              </div>
-            </div>
-            <button onClick={() => toast('기능 카드가 대화 흐름에 맞춰 바뀌어요')} className="pill pill-teal" style={{ fontSize: 10.5 }}>
-              AI 추천
-            </button>
-          </div>
-
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
-              {cards.slice(0, 1).map((card, i) => (
-                <FeatureCard
-                  key={card.id}
-                  card={card}
-                  onAction={() => {
-                    if (card.action.type === 'nav') nav(card.action.target);
-                    else respond(card.action.prompt);
-                  }}
-                  delay={i}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -746,6 +794,11 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit }) {
 function BudgetDesignerCard({ m, onSubmit }) {
   const [salary, setSalary] = useState(m.salary || '');
   const [fixedCost, setFixedCost] = useState(m.fixedCost || '');
+  const [housing, setHousing] = useState(m.housing || '');
+  const [telecomTransport, setTelecomTransport] = useState(m.telecomTransport || '');
+  const [foodLiving, setFoodLiving] = useState(m.foodLiving || '');
+  const [wantLimit, setWantLimit] = useState(m.wantLimit || '');
+  const [savingTargetAmount, setSavingTargetAmount] = useState(m.savingTargetAmount || '');
   const [savingsGoal, setSavingsGoal] = useState(m.savingsGoal || '비상금');
   const [budgetRule, setBudgetRule] = useState(m.budgetRule || '50_30_20');
   const goals = ['비상금', '여행', '독립', '전세·주거', '투자 시작'];
@@ -759,11 +812,30 @@ function BudgetDesignerCard({ m, onSubmit }) {
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div className="card" style={{ maxWidth: '94%', padding: 14, border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
         <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--ink)' }}>첫 월급 예산 설계</div>
-        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>금액과 목표를 선택하면 바로 예산안을 만들어요</div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>고정비와 목표를 나눠 입력하면 더 정확하게 설계해요</div>
 
         <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>
           <BudgetInput label="세후 월급" value={salary} onChange={setSalary} />
-          <BudgetInput label="매달 꼭 나가는 돈" value={fixedCost} onChange={setFixedCost} placeholder="월세, 통신비 등" />
+          <BudgetInput label="매달 꼭 나가는 돈" value={fixedCost} onChange={setFixedCost} placeholder="모르면 비워둬도 돼요" />
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>필수비 세부 입력</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
+              <BudgetInput label="주거·관리비" value={housing} onChange={setHousing} compact />
+              <BudgetInput label="통신·교통" value={telecomTransport} onChange={setTelecomTransport} compact />
+            </div>
+            <div style={{ marginTop: 7 }}>
+              <BudgetInput label="식비·생활" value={foodLiving} onChange={setFoodLiving} compact />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>조절 항목</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
+              <BudgetInput label="여유비 한도" value={wantLimit} onChange={setWantLimit} compact />
+              <BudgetInput label="목표 저축액" value={savingTargetAmount} onChange={setSavingTargetAmount} compact />
+            </div>
+          </div>
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>저축 목표</div>
@@ -807,7 +879,7 @@ function BudgetDesignerCard({ m, onSubmit }) {
 
           <button
             disabled={m.submitted || !salary}
-            onClick={() => onSubmit(m.id, { salary, fixedCost, savingsGoal, budgetRule })}
+            onClick={() => onSubmit(m.id, { salary, fixedCost, housing, telecomTransport, foodLiving, wantLimit, savingTargetAmount, savingsGoal, budgetRule })}
             className="btn btn-primary"
             style={{ height: 40, fontSize: 14, boxShadow: 'none', opacity: m.submitted || !salary ? .45 : 1 }}
           >
@@ -819,22 +891,30 @@ function BudgetDesignerCard({ m, onSubmit }) {
   );
 }
 
-function BudgetInput({ label, value, onChange, placeholder = '원 단위' }) {
+function BudgetInput({ label, value, onChange, placeholder = '원 단위', compact = false }) {
   return (
     <label style={{ display: 'grid', gap: 5 }}>
-      <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)' }}>{label}</span>
+      <span style={{ fontSize: compact ? 11.2 : 12, fontWeight: 800, color: 'var(--slate-600)' }}>{label}</span>
       <input
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ height: 38, border: '1px solid var(--line)', borderRadius: 11, padding: '0 11px', outline: 'none', color: 'var(--ink)', background: 'var(--bg)' }}
+        style={{ height: compact ? 34 : 38, border: '1px solid var(--line)', borderRadius: 11, padding: '0 10px', outline: 'none', color: 'var(--ink)', background: 'var(--bg)', fontSize: compact ? 12.5 : 13.5, minWidth: 0 }}
       />
     </label>
   );
 }
 
 function BudgetPlanPreview({ data, recommendations = [] }) {
+  const details = data.expenseDetails || {};
+  const detailItems = [
+    ['주거', details.housing],
+    ['통신·교통', details.telecomTransport],
+    ['식비·생활', details.foodLiving],
+    ['여유비 한도', details.wantLimit],
+    ['목표 저축', details.savingTargetAmount],
+  ].filter(([, value]) => Number(value) > 0);
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div className="card" style={{ maxWidth: '94%', padding: 14, boxShadow: 'var(--shadow-sm)' }}>
@@ -848,6 +928,18 @@ function BudgetPlanPreview({ data, recommendations = [] }) {
             <span className="tnum" style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--teal-700)' }}>{won(bucket.amount)}</span>
           </div>
         ))}
+        {detailItems.length > 0 && (
+          <div style={{ marginTop: 10, padding: '9px 10px', borderRadius: 11, background: 'var(--teal-50)' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--teal-800)', marginBottom: 6 }}>입력 기준</div>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              {detailItems.map(([label, value]) => (
+                <span key={label} className="pill" style={{ background: 'var(--card)', border: '1px solid var(--teal-100)', color: 'var(--teal-700)', fontSize: 10.5 }}>
+                  {label} {won(value)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 7 }}>추천 항목</div>
           <div style={{ display: 'grid', gap: 6 }}>
@@ -996,7 +1088,7 @@ function Home({ nav, toast }) {
         </div>
       </div>
 
-      <div style={{ padding:'0 18px 26px', marginTop:-40, position:'relative', zIndex:2 }} className="stagger">
+      <div style={{ padding:'0 18px 116px', marginTop:-40, position:'relative', zIndex:2 }} className="stagger">
         <div style={{ ...stagger(0) }}>
           <button
             onClick={() => nav('chat')}

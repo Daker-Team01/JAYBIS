@@ -159,7 +159,7 @@ input,textarea{ font-family:inherit; }
 
 /* 탭바 */
 .tabbar{
-  height:var(--tab-h); flex-shrink:0; position:relative;
+  height:var(--tab-h); flex-shrink:0; position:relative; z-index:220;
   background:rgba(255,255,255,.86);
   backdrop-filter:saturate(180%) blur(18px);
   -webkit-backdrop-filter:saturate(180%) blur(18px);
@@ -175,15 +175,15 @@ input,textarea{ font-family:inherit; }
 }
 .tab.active{ color:var(--teal-600); }
 .tab-fab{
-  position:relative; top:-16px;
+  position:relative; top:-16px; z-index:240;
   width:58px; height:58px; border-radius:50%;
   background:linear-gradient(160deg, var(--teal-500), var(--teal-700));
   display:flex; align-items:center; justify-content:center;
   box-shadow:0 8px 20px rgba(0,71,187,.4), inset 0 1px 1px rgba(255,255,255,.3);
   flex:0 0 auto;
 }
-.tab-fab-wrap{ flex:1; display:flex; flex-direction:column; align-items:center; }
-.tab-fab-label{ font-size:10.5px; font-weight:700; color:var(--teal-600); margin-top:-9px; }
+.tab-fab-wrap{ flex:1; display:flex; flex-direction:column; align-items:center; position:relative; z-index:235; }
+.tab-fab-label{ font-size:10.5px; font-weight:700; color:var(--teal-600); margin-top:-9px; position:relative; z-index:240; }
 
 /* 게이지 라벨 */
 .gauge-wrap{ position:relative; display:inline-flex; align-items:center; justify-content:center; }

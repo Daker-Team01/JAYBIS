@@ -329,7 +329,15 @@ function selectJaybisToolCall(text, context = {}) {
   const sim = snapshot.sim || SIM;
   const t = text.replace(/\s/g, '');
   const amount = extractWonAmount(text);
-  if (/(첫월급|월급|예산|50\/30\/20|503020)/.test(t)) {
+  const mentionsBudget = /(예산|생활비|월급관리|50\/30\/20|503020)/.test(t);
+  const wantsBudgetDesign = (
+    /(첫월급|50\/30\/20|503020)/.test(t) ||
+    (mentionsBudget && /(짜|짜줘|설계|만들|세워|계획|분배|나눠|추천|구성|반영)/.test(t)) ||
+    (/(월급|세후)/.test(t) && /(예산|관리|분배|나눠)/.test(t) && !/(어때|어떤|괜찮|평가|진단|분석|봐줘|확인)/.test(t))
+  );
+  const wantsBudgetReview = mentionsBudget && /(어때|어떤|괜찮|평가|진단|분석|봐줘|확인|문제|초과|부족)/.test(t);
+
+  if (wantsBudgetDesign && !wantsBudgetReview) {
     return {
       name: 'first_salary_budget_design',
       arguments: {
@@ -338,7 +346,7 @@ function selectJaybisToolCall(text, context = {}) {
       },
     };
   }
-  if (/(마이데이터|소비|지출|수기|입력|많이썼|고정비|구독)/.test(t)) {
+  if (wantsBudgetReview || /(마이데이터|소비|지출|수기|입력|많이썼|고정비|구독)/.test(t)) {
     return {
       name: 'mydata_spending_diagnosis',
       arguments: {
