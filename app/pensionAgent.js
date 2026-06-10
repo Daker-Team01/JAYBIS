@@ -123,13 +123,15 @@ export async function runPensionAgent(userMessage) {
   // 사용자 메시지를 히스토리에 추가
   conversationHistory.push(new HumanMessage(userMessage));
 
+  let lastAnalysisData = null;
+
   for (let i = 0; i < 5; i++) {
     const response = await llm.invoke(conversationHistory);
     conversationHistory.push(response);
 
     const toolCalls = response.tool_calls || [];
     if (toolCalls.length === 0) {
-      return { message: response.content, intent: 'pension_agent' };
+      return { message: response.content, intent: 'pension_agent', analysisData: lastAnalysisData };
     }
 
     for (const call of toolCalls) {
@@ -138,13 +140,20 @@ export async function runPensionAgent(userMessage) {
         ? await toolFn.invoke(call.args)
         : `도구 "${call.name}"를 찾을 수 없어요.`;
 
+      // analyze_pension 호출 시 구조화 데이터도 함께 보존
+      if (call.name === 'analyze_pension') {
+        try {
+          lastAnalysisData = analyzeRetirementIncome(call.args);
+        } catch {}
+      }
+
       conversationHistory.push(
         new ToolMessage({ tool_call_id: call.id, content: String(toolResult) })
       );
     }
   }
 
-  return { message: '죄송해요, 분석 중 문제가 생겼어요. 다시 시도해 주세요.', intent: 'pension_agent' };
+  return { message: '죄송해요, 분석 중 문제가 생겼어요. 다시 시도해 주세요.', intent: 'pension_agent', analysisData: lastAnalysisData };
 }
 
 export default runPensionAgent;
