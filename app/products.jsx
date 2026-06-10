@@ -18,6 +18,25 @@ function Products({ nav, toast }) {
   const r = simulate(monthly, sim);
   const hasProducts = products.length > 0;
 
+  const getApplyUrl = (product) => {
+    const direct = product.applyUrl || product.apply_url || product.joinUrl || product.join_url || product.productUrl || product.product_url || product.sourceUrl || product.source_url;
+    if (direct) return direct;
+    const text = [product.provider, product.issuer, product.name, ...(Array.isArray(product.tags) ? product.tags : [])].filter(Boolean).join(' ');
+    if (/광주은행|광주/.test(text)) return 'https://www.kjbank.com';
+    if (/전북은행|JB|전북/.test(text)) return 'https://www.jbbank.co.kr';
+    return '';
+  };
+
+  const openApplyPage = (product) => {
+    const url = getApplyUrl(product);
+    if (!url) {
+      toast(product.name + ' 비대면 가입 URL이 아직 연결되지 않았어요');
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    toast(product.name + ' 가입 페이지로 이동해요');
+  };
+
   useEffect(() => {
     let alive = true;
     setLoadState('loading');
@@ -70,7 +89,7 @@ function Products({ nav, toast }) {
                   <span style={{ position:'absolute', left:8, top:18, width:28, height:28, borderRadius:'50%',
                     background:p.tone, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
                     fontSize:13, fontWeight:800, zIndex:1, boxShadow:'0 2px 6px '+p.tone+'66' }}>{p.rank}</span>
-                  <ProductCard p={p} onApply={() => toast(p.name + ' 가입 신청을 시작했어요')} />
+                  <ProductCard p={p} onApply={() => openApplyPage(p)} />
                 </div>
               )) : (
                 <div className="card" style={{ padding:'16px 18px', marginLeft:0 }}>
@@ -134,7 +153,7 @@ function Products({ nav, toast }) {
                 </div>
               ))}
 
-              <button onClick={() => toast(sim.productName + ' 가입을 시작했어요')} className="btn btn-primary" style={{ marginTop:16 }}>
+              <button onClick={() => openApplyPage(products[0] || { name: sim.productName })} className="btn btn-primary" style={{ marginTop:16 }}>
                 이 조건으로 가입하기
               </button>
             </div>

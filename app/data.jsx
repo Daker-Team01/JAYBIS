@@ -15,6 +15,8 @@ const SUPABASE_DATA_ID = import.meta.env.VITE_SUPABASE_DATA_ID || 'default';
 const SUPABASE_PRODUCTS_TABLE = import.meta.env.VITE_SUPABASE_PRODUCTS_TABLE || 'financial_products';
 const SUPABASE_TRANSACTIONS_TABLE = import.meta.env.VITE_SUPABASE_TRANSACTIONS_TABLE || 'transactions';
 const SUPABASE_BUDGET_INSIGHTS_TABLE = import.meta.env.VITE_SUPABASE_BUDGET_INSIGHTS_TABLE || 'budget_insights';
+const CARD_SPENDING_PATTERN_CSV_URL = new URL('../data/블록별 성별연령대별 카드소비패턴.utf8.csv', import.meta.url).href;
+const CARD_INDUSTRY_CODE_CSV_URL = new URL('../data/카드소비 업종코드.utf8.csv', import.meta.url).href;
 
 // ---- 포맷 헬퍼 --------------------------------------------------------------
 const numberOrZero = (value) => {
@@ -210,6 +212,8 @@ function normalizeProducts(products = []) {
         minRate: numberOrZero(product.minRate ?? product.min_rate),
         maxRate: numberOrZero(product.maxRate ?? product.max_rate),
         rateType: product.rateType || product.rate_type || '',
+        applyUrl: product.applyUrl || product.apply_url || product.joinUrl || product.join_url || product.productUrl || product.product_url || product.sourceUrl || product.source_url || '',
+        sourceUrl: product.sourceUrl || product.source_url || '',
         maxMonthly: numberOrZero(product.maxMonthly),
         term: numberOrZero(product.term),
         maturity: numberOrZero(product.maturity),
@@ -267,6 +271,7 @@ function normalizeSupabaseFinancialProduct(row = {}, index = 0) {
     eligible: row.eligible,
     sourceName: row.source_name || row.sourceName,
     sourceUrl: row.source_url || row.sourceUrl,
+    applyUrl: row.apply_url || row.applyUrl || row.join_url || row.joinUrl || row.product_url || row.productUrl || row.source_url || row.sourceUrl,
     updatedAt: row.updated_at || row.updatedAt,
   }])[0];
 }
@@ -339,6 +344,134 @@ function normalizeBudgetInsights(insights = []) {
         source: insight.source || 'jaybis_agent',
       }))
     : [];
+}
+
+function parseCsvLine(line = '') {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const next = line[i + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      i += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function parseCsv(text = '') {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim());
+  if (!lines.length) return [];
+  const headers = parseCsvLine(lines[0]).map((header) => header.trim());
+  return lines.slice(1).map((line) => {
+    const cells = parseCsvLine(line);
+    return Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? '']));
+  });
+}
+
+function ageToPeerBand(age) {
+  const value = numberOrZero(age);
+  if (!value) return '';
+  if (value < 20) return '10대';
+  if (value >= 70) return '70대이상';
+  return `${Math.floor(value / 10) * 10}대`;
+}
+
+function mapTransactionToPeerClass(transaction = {}) {
+  const text = [
+    transaction.category,
+    transaction.categoryLabel,
+    transaction.name,
+    transaction.description,
+  ].filter(Boolean).join(' ');
+  if (/배달|외식|카페|커피|food_delivery|cafe/.test(text)) return '요식/유흥';
+  if (/식비|마트|편의점|음식|식료|food/.test(text)) return '음/식료품';
+  if (/교통|버스|지하철|택시|transport/.test(text)) return '여행/교통';
+  if (/쇼핑|온라인|쿠팡|마켓|shopping/.test(text)) return '전자상거래';
+  if (/구독|OTT|영화|문화|subscription/.test(text)) return '스포츠/문화/레저';
+  if (/의류|잡화|패션/.test(text)) return '의류/잡화';
+  if (/병원|의료|약국/.test(text)) return '의료';
+  if (/주유|자동차/.test(text)) return '주유';
+  return '';
+}
+
+async function loadCardPeerComparisons({ age, transactions = [] } = {}) {
+  const ageBand = ageToPeerBand(age);
+  if (!ageBand) return [];
+
+  const [patternText, industryText] = await Promise.all([
+    fetch(CARD_SPENDING_PATTERN_CSV_URL).then((response) => response.text()),
+    fetch(CARD_INDUSTRY_CODE_CSV_URL).then((response) => response.text()),
+  ]);
+  const industryRows = parseCsv(industryText);
+  const patternRows = parseCsv(patternText);
+  const industryByCode = Object.fromEntries(industryRows.map((row) => [
+    String(row['업종코드(UPJONG_CD)'] || '').toLowerCase(),
+    row,
+  ]));
+
+  const peerGroups = patternRows
+    .filter((row) => row['연령대별(AGE)'] === ageBand)
+    .reduce((acc, row) => {
+      const code = String(row['서울시민업종코드(UPJONG_CD)'] || '').toLowerCase();
+      const industry = industryByCode[code];
+      const label = industry?.['대분류(CLASS1)'];
+      if (!label) return acc;
+      if (!acc[label]) acc[label] = { amount: 0, count: 0 };
+      acc[label].amount += numberOrZero(row['카드이용금액계(AMT_CORR)']);
+      acc[label].count += 1;
+      return acc;
+    }, {});
+  const peerTotal = Object.values(peerGroups)
+    .reduce((sum, group) => sum + numberOrZero(group.amount), 0);
+
+  const mySpendTransactions = normalizeTransactions(transactions)
+    .filter((transaction) => transaction.type === 'spend' && !transaction.isExcluded);
+  const myTotal = mySpendTransactions
+    .reduce((sum, transaction) => sum + Math.abs(numberOrZero(transaction.amount)), 0);
+  const myGroups = mySpendTransactions.reduce((acc, transaction) => {
+      const label = mapTransactionToPeerClass(transaction);
+      if (!label) return acc;
+      acc[label] = (acc[label] || 0) + Math.abs(numberOrZero(transaction.amount));
+      return acc;
+    }, {});
+
+  const labels = Object.keys(myGroups)
+    .filter((label) => peerGroups[label]?.amount && myTotal && peerTotal)
+    .map((label) => {
+      const meAmount = Math.round(myGroups[label]);
+      const peerAmount = Math.round(peerGroups[label].amount);
+      const meRatio = myTotal ? meAmount / myTotal * 100 : 0;
+      const peerRatio = peerTotal ? peerAmount / peerTotal * 100 : 0;
+      const diff = meRatio - peerRatio;
+      return {
+        label,
+        me: meAmount,
+        peer: peerAmount,
+        meRatio,
+        peerRatio,
+        diff,
+        status: Math.abs(diff) >= 5 ? (diff > 0 ? '높음' : '낮음') : '비슷',
+        over: Math.abs(diff) >= 5 ? diff > 0 : undefined,
+        source: 'card_peer_csv',
+        ageBand,
+      };
+    })
+    .filter((item) => item.status !== '비슷')
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
+    .slice(0, 5);
+
+  return labels;
 }
 
 function mapBudgetBucket(bucket) {
@@ -708,6 +841,11 @@ async function refreshSupabaseTransactions(options = {}) {
   const transactions = await fetchSupabaseTransactions(options);
   const snapshot = getRuntimeSnapshot();
   const nextBudget = buildBudgetFromTransactions(transactions, snapshot.raw.budget || snapshot.budget);
+  const peers = await loadCardPeerComparisons({
+    age: snapshot.user?.age,
+    transactions,
+  }).catch(() => []);
+  nextBudget.peers = peers;
   const nextAssets = {
     ...(snapshot.raw.assets || {}),
     cashflow: {

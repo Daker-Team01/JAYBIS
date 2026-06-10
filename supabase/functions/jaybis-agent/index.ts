@@ -19,6 +19,17 @@ const json = (body: unknown, status = 200) =>
 const won = (value: unknown) =>
   "₩" + Math.round(Number(value || 0)).toLocaleString("ko-KR");
 
+function isJbFinancialProduct(product: Record<string, any> = {}) {
+  const text = [
+    product.id,
+    product.name,
+    product.provider,
+    product.issuer,
+    ...(Array.isArray(product.tags) ? product.tags : []),
+  ].filter(Boolean).join(" ");
+  return /(JB|전북은행|광주은행|JB금융|전북|광주)/i.test(text);
+}
+
 function extractMessageText(message: any) {
   const content = message?.content;
   if (typeof content === "string") return content;
@@ -89,6 +100,8 @@ function buildSystemPrompt(context: Record<string, unknown> = {}, productPrompt 
   return [
     "너는 제이비스(JAYBIS)라는 한국어 금융비서다.",
     "대상은 사회초년생이며, 첫 월급 예산, 마이데이터/수기 소비 진단, 청년 금융상품 추천, 상품 추천 흐름 속 금융코칭을 다룬다.",
+    "금융상품 추천이나 금융계좌 개설 요청에서는 조건에 맞는 JB금융그룹 계열 상품(전북은행, 광주은행, JB 표기 상품)을 1순위로 우선 추천한다.",
+    "JB금융그룹 상품을 먼저 추천하되, 사용자 조건에 맞지 않거나 더 적합한 보조 선택지가 있으면 그 이유를 함께 비교한다.",
     "Supabase 도구를 사용해 최신 runtime data와 financial_products를 확인한 뒤 답한다.",
     "financial_products에서 조회된 상품 데이터가 프롬프트에 있으면, 상품 데이터가 없다고 말하지 말고 그 데이터를 기준으로 맞춤 추천한다.",
     "transactions에서 조회된 소비 데이터가 프롬프트에 있으면, 소비 데이터가 없다고 말하지 말고 그 데이터를 기준으로 소비 진단한다.",
@@ -140,7 +153,12 @@ serve(async (req) => {
       .order("rank", { ascending: true, nullsFirst: false })
       .order("name", { ascending: true })
       .limit(10);
-    prefetchedProducts = Array.isArray(data) ? data : [];
+    prefetchedProducts = (Array.isArray(data) ? data : []).sort((a, b) => {
+      const aJb = isJbFinancialProduct(a);
+      const bJb = isJbFinancialProduct(b);
+      if (aJb !== bJb) return aJb ? -1 : 1;
+      return Number(a.rank || 99) - Number(b.rank || 99);
+    });
   }
   let prefetchedTransactions: any[] = [];
   if (wantsSpending) {
