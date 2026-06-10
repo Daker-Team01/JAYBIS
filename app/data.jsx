@@ -13,6 +13,8 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SUPABASE_DATA_TABLE = import.meta.env.VITE_SUPABASE_DATA_TABLE || 'jaybis_runtime_data';
 const SUPABASE_DATA_ID = import.meta.env.VITE_SUPABASE_DATA_ID || 'default';
 const SUPABASE_PRODUCTS_TABLE = import.meta.env.VITE_SUPABASE_PRODUCTS_TABLE || 'financial_products';
+const SUPABASE_TRANSACTIONS_TABLE = import.meta.env.VITE_SUPABASE_TRANSACTIONS_TABLE || 'transactions';
+const SUPABASE_BUDGET_INSIGHTS_TABLE = import.meta.env.VITE_SUPABASE_BUDGET_INSIGHTS_TABLE || 'budget_insights';
 
 // ---- 포맷 헬퍼 --------------------------------------------------------------
 const numberOrZero = (value) => {
@@ -282,6 +284,59 @@ function normalizeTransactions(transactions = []) {
         fixed: Boolean(transaction.fixed ?? transaction.isFixed),
         ...transaction,
         type: transaction.type === 'income' ? 'income' : 'spend',
+      }))
+    : [];
+}
+
+function normalizeSupabaseTransaction(row = {}, index = 0) {
+  return normalizeTransactions([{
+    id: row.id || `tx-${index + 1}`,
+    date: row.transaction_date || row.date || '',
+    postedAt: row.posted_at || row.postedAt || '',
+    sourceType: row.source_type || row.sourceType || '',
+    sourceId: row.source_id || row.sourceId || '',
+    institutionId: row.institution_id || row.institutionId || '',
+    merchantName: row.merchant_name || row.merchantName || row.description || '',
+    name: row.merchant_name || row.merchantName || row.description || '',
+    description: row.description || '',
+    amount: row.amount,
+    currency: row.currency || 'KRW',
+    type: row.transaction_type === 'income' ? 'income' : 'spend',
+    transactionType: row.transaction_type || row.transactionType,
+    category: row.category || '기타',
+    categoryLabel: row.category_label || row.categoryLabel || row.category || '기타',
+    bucket: row.budget_bucket || row.budgetBucket || '',
+    budgetBucket: row.budget_bucket || row.budgetBucket || '',
+    paymentMethod: row.payment_method || row.paymentMethod || '',
+    accountId: row.account_id || row.accountId || '',
+    cardId: row.card_id || row.cardId || '',
+    fixed: Boolean(row.is_fixed ?? row.fixed),
+    isFixed: Boolean(row.is_fixed ?? row.fixed),
+    isSubscription: Boolean(row.is_subscription ?? row.isSubscription),
+    isExcluded: Boolean(row.is_excluded ?? row.isExcluded),
+    memo: row.memo || '',
+    rawData: row.raw_data || row.rawData || {},
+  }])[0];
+}
+
+function normalizeBudgetInsights(insights = []) {
+  return Array.isArray(insights)
+    ? insights.map((insight, index) => ({
+        id: insight.id || `insight-${index + 1}`,
+        type: insight.type || 'saving_opportunity',
+        severity: insight.severity || 'info',
+        title: insight.title || '절약 포인트',
+        body: insight.body || '',
+        category: insight.category || '',
+        categoryLabel: insight.category_label || insight.categoryLabel || insight.category || '',
+        bucket: insight.budget_bucket || insight.budgetBucket || '',
+        currentAmount: numberOrZero(insight.current_amount ?? insight.currentAmount),
+        suggestedLimit: numberOrZero(insight.suggested_limit ?? insight.suggestedLimit),
+        save: numberOrZero(insight.expected_saving ?? insight.save),
+        actionLabel: insight.action_label || insight.actionLabel || '한도 적용하기',
+        actionPayload: insight.action_payload || insight.actionPayload || {},
+        status: insight.status || 'active',
+        source: insight.source || 'jaybis_agent',
       }))
     : [];
 }
@@ -583,6 +638,174 @@ async function refreshSupabaseFinancialProducts() {
     ...snapshot.raw,
     products,
   });
+}
+
+async function fetchSupabaseTransactions({ table = SUPABASE_TRANSACTIONS_TABLE, userId = SUPABASE_DATA_ID, limit = 200 } = {}) {
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/jaybis-transactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ userId: userId || 'default', limit }),
+    }).catch(() => null);
+    if (response?.ok) {
+      const payload = await response.json().catch(() => ({}));
+      return (Array.isArray(payload.transactions) ? payload.transactions : [])
+        .map((row, index) => normalizeSupabaseTransaction(row, index));
+    }
+  }
+
+  const params = new URLSearchParams({
+    select: '*',
+    user_id: `eq.${userId || 'default'}`,
+    order: 'transaction_date.desc,posted_at.desc',
+    limit: String(limit),
+  });
+  const rows = await supabaseRequest(table, { params: params.toString() });
+  return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => normalizeSupabaseTransaction(row, index));
+}
+
+function buildBudgetFromTransactions(transactions = [], previousBudget = {}) {
+  const normalized = normalizeTransactions(transactions).filter((tx) => !tx.isExcluded);
+  const income = normalized
+    .filter((tx) => tx.type === 'income')
+    .reduce((sum, tx) => sum + Math.abs(numberOrZero(tx.amount)), 0);
+  const salary = income || numberOrZero(previousBudget.salary);
+  const categories = buildCategoriesFromTransactions(normalized, previousBudget);
+  const usedByBucket = categories.reduce((acc, category) => {
+    acc[category.bucket] = (acc[category.bucket] || 0) + numberOrZero(category.used);
+    return acc;
+  }, {});
+  const buckets = EMPTY_BUDGET.buckets.map((bucket, index) => {
+    const prev = previousBudget.buckets?.[index] || {};
+    return {
+      ...bucket,
+      ...prev,
+      ratio: numberOrZero(prev.ratio || bucket.ratio),
+      plan: numberOrZero(prev.plan) || Math.round(salary * numberOrZero(prev.ratio || bucket.ratio) / 100),
+      used: usedByBucket[bucket.key] || 0,
+    };
+  });
+
+  return {
+    ...EMPTY_BUDGET,
+    ...previousBudget,
+    salary,
+    buckets,
+    categories,
+    alerts: [],
+    nextMonthTip: normalized.length
+      ? `Supabase 소비내역 ${normalized.length}건을 기준으로 예산 사용액을 다시 계산했어요.`
+      : previousBudget.nextMonthTip,
+  };
+}
+
+async function refreshSupabaseTransactions(options = {}) {
+  const transactions = await fetchSupabaseTransactions(options);
+  const snapshot = getRuntimeSnapshot();
+  const nextBudget = buildBudgetFromTransactions(transactions, snapshot.raw.budget || snapshot.budget);
+  const nextAssets = {
+    ...(snapshot.raw.assets || {}),
+    cashflow: {
+      ...(snapshot.raw.assets?.cashflow || {}),
+      income: transactions.filter((tx) => tx.type === 'income').reduce((sum, tx) => sum + Math.abs(numberOrZero(tx.amount)), 0),
+      spend: transactions.filter((tx) => tx.type !== 'income').reduce((sum, tx) => sum + Math.abs(numberOrZero(tx.amount)), 0),
+    },
+  };
+  nextAssets.cashflow.left = numberOrZero(nextAssets.cashflow.income) - numberOrZero(nextAssets.cashflow.spend);
+  return saveRuntimeData({
+    ...snapshot.raw,
+    assets: nextAssets,
+    budget: nextBudget,
+    transactions,
+    metadata: {
+      ...(snapshot.raw.metadata || {}),
+      dataSource: 'supabase_transactions',
+      transactionsSyncedAt: new Date().toISOString(),
+    },
+  });
+}
+
+async function fetchSupabaseBudgetInsights({ table = SUPABASE_BUDGET_INSIGHTS_TABLE, userId = SUPABASE_DATA_ID, status = 'active', limit = 20 } = {}) {
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const params = new URLSearchParams({
+    select: '*',
+    user_id: `eq.${userId || 'default'}`,
+    status: `eq.${status}`,
+    order: 'created_at.desc',
+    limit: String(limit),
+  });
+  const rows = await supabaseRequest(table, { params: params.toString() });
+  return normalizeBudgetInsights(Array.isArray(rows) ? rows : [])
+    .filter((insight) => !insight.insightMonth || insight.insightMonth === currentMonth || true);
+}
+
+async function updateSupabaseBudgetInsightStatus(id, status = 'applied') {
+  if (!id) return null;
+  const params = new URLSearchParams({ id: `eq.${id}` });
+  const rows = await supabaseRequest(SUPABASE_BUDGET_INSIGHTS_TABLE, {
+    method: 'PATCH',
+    params: params.toString(),
+    body: {
+      status,
+      updated_at: new Date().toISOString(),
+    },
+  });
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function refreshSupabaseBudgetInsights(options = {}) {
+  const alerts = await fetchSupabaseBudgetInsights(options);
+  const snapshot = getRuntimeSnapshot();
+  return saveRuntimeData({
+    ...snapshot.raw,
+    budget: {
+      ...(snapshot.raw.budget || snapshot.budget || {}),
+      alerts,
+    },
+  });
+}
+
+function applyBudgetInsight(insight) {
+  const snapshot = getRuntimeSnapshot();
+  const currentBudget = snapshot.raw.budget || snapshot.budget || EMPTY_BUDGET;
+  const suggestedLimit = numberOrZero(insight?.suggestedLimit || insight?.actionPayload?.limit);
+  const categoryKey = insight?.category || insight?.actionPayload?.budgetCategory || '';
+  const categoryLabel = insight?.categoryLabel || '';
+  const bucket = insight?.bucket || insight?.budgetBucket || '';
+  if (!suggestedLimit) return snapshot;
+
+  const categories = (currentBudget.categories || []).map((category) => {
+    const matchesCategory = categoryKey && (category.category === categoryKey || category.id === categoryKey);
+    const matchesLabel = categoryLabel && category.label === categoryLabel;
+    const matchesBucket = bucket && category.bucket === bucket && (matchesLabel || matchesCategory);
+    if (!matchesCategory && !matchesLabel && !matchesBucket) return category;
+    return {
+      ...category,
+      plan: suggestedLimit,
+      suggestedLimit,
+    };
+  });
+
+  const nextBudget = {
+    ...currentBudget,
+    categories,
+    alerts: (currentBudget.alerts || []).map((alert) => (
+      alert.id === insight.id ? { ...alert, status: 'applied' } : alert
+    )).filter((alert) => alert.status !== 'applied'),
+    nextMonthTip: `${insight.categoryLabel || insight.title} 한도를 ${won(suggestedLimit)}로 조정했어요.`,
+  };
+
+  const next = saveRuntimeData({
+    ...snapshot.raw,
+    budget: nextBudget,
+  });
+  updateSupabaseBudgetInsightStatus(insight.id, 'applied').catch(() => {});
+  return next;
 }
 
 async function refreshJaybisRuntimeData(endpoint = JAYBIS_DATA_ENDPOINT) {
@@ -919,11 +1142,13 @@ if (JAYBIS_DATA_ENDPOINT) {
 
 Object.assign(window, {
   JAYBIS_DATA_KEY, JAYBIS_CHAT_KEY, JAYBIS_DATA_ENDPOINT,
-  SUPABASE_URL, SUPABASE_DATA_TABLE, SUPABASE_DATA_ID, SUPABASE_PRODUCTS_TABLE,
+  SUPABASE_URL, SUPABASE_DATA_TABLE, SUPABASE_DATA_ID, SUPABASE_PRODUCTS_TABLE, SUPABASE_TRANSACTIONS_TABLE, SUPABASE_BUDGET_INSIGHTS_TABLE,
   getRuntimeSnapshot, saveRuntimeData, refreshJaybisRuntimeData, useJaybisRuntimeData,
   normalizeMyDataRuntimeData, saveMyDataRuntimeData, buildManualRuntimeData, saveManualRuntimeData,
   getSupabaseConfigStatus, supabaseRequest, fetchSupabaseRuntimeData, saveSupabaseRuntimeData,
   fetchSupabaseFinancialProducts, refreshSupabaseFinancialProducts,
+  fetchSupabaseTransactions, refreshSupabaseTransactions,
+  fetchSupabaseBudgetInsights, refreshSupabaseBudgetInsights, applyBudgetInsight,
   defaultJaybisChatMessages, loadJaybisChatMessages, saveJaybisChatMessages, clearJaybisChatMessages, createJaybisMessageId,
   won, manwon, pct,
   USER, MYDATA_INSTITUTIONS, ASSETS, AI_DIAGNOSIS,

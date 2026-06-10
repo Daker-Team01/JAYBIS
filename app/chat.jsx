@@ -15,6 +15,7 @@ const {
 } = window;
 
 function Chat({ onClose, seed }) {
+  const SCROLL_KEY = 'jaybis.fullChatScrollTop';
   const [settings] = useAppSettings();
   const [msgs, setMsgs] = useState(() => loadJaybisChatMessages([
     { id: 'g1', who: 'ai', kind: 'text', text: `안녕하세요 ${USER.greeting || USER.name}님, 금융비서 제이비스예요. 예산, 소비 진단, 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.` },
@@ -24,10 +25,21 @@ function Chat({ onClose, seed }) {
   const [status, setStatus] = useState(getJaybisOpenAIConfigStatus());
   const scrollRef = useRef(null);
   const lastAiMessageIdRef = useRef(null);
+  const shouldAutoScrollRef = useRef(false);
   const persistedMsgsRef = useRef(JSON.stringify(msgs));
   const nid = () => createJaybisMessageId();
 
   useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = Number(window.sessionStorage?.getItem(SCROLL_KEY) || 0);
+    requestAnimationFrame(() => {
+      el.scrollTop = saved;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
     const lastAi = [...msgs].reverse().find((m) => m.who === 'ai');
@@ -41,6 +53,14 @@ function Chat({ onClose, seed }) {
     }
     if (busy) el.scrollTop = el.scrollHeight;
   }, [msgs, busy]);
+
+  const rememberScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    try {
+      window.sessionStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+    } catch (err) {}
+  };
 
   useEffect(() => {
     const serialized = JSON.stringify(msgs);
@@ -86,6 +106,7 @@ function Chat({ onClose, seed }) {
 
   async function respond(text) {
     if (busy) return;
+    shouldAutoScrollRef.current = true;
     const nextMsgs = [...msgs, { id: nid(), who: 'me', kind: 'text', text }];
     push({ who: 'me', kind: 'text', text });
     setBusy(true);
@@ -152,7 +173,7 @@ function Chat({ onClose, seed }) {
         </div>
       </div>
 
-      <div ref={scrollRef} className="scroll" style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div ref={scrollRef} onScroll={rememberScroll} className="scroll" style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} /></div>)}
         {busy && <TypingBubble />}
         <div style={{ height: 4 }} />

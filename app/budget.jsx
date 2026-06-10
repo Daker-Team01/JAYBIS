@@ -3,8 +3,9 @@
    ========================================================================= */
 
 const {
-  useState, TopBar, SectionLabel, Icon, Bar, stagger,
-  USER, BUDGET, useJaybisRuntimeData, saveMyDataRuntimeData, saveManualRuntimeData, won, manwon,
+  useState, useEffect, TopBar, SectionLabel, Icon, Bar, stagger,
+  USER, BUDGET, useJaybisRuntimeData, saveMyDataRuntimeData, saveManualRuntimeData,
+  refreshSupabaseTransactions, refreshSupabaseBudgetInsights, applyBudgetInsight, won, manwon,
 } = window;
 
 function Budget({ nav, toast }) {
@@ -19,9 +20,20 @@ function Budget({ nav, toast }) {
   const [mydataText, setMydataText] = useState('');
   const [manual, setManual] = useState({ salary: '', need: '', want: '', save: '', memo: '' });
   const [inputError, setInputError] = useState('');
+  const [syncState, setSyncState] = useState('idle');
   const cats = tab === 'all' ? b.categories : b.categories.filter(c => c.bucket === tab);
   const hasConnectedData = Boolean((snapshot?.transactions || []).length || b.salary);
   const dataSource = snapshot?.raw?.metadata?.dataSource || '';
+
+  useEffect(() => {
+    let alive = true;
+    setSyncState('loading');
+    refreshSupabaseTransactions()
+      .then(() => refreshSupabaseBudgetInsights())
+      .then(() => { if (alive) setSyncState('done'); })
+      .catch(() => { if (alive) setSyncState('error'); });
+    return () => { alive = false; };
+  }, []);
 
   const applyMyData = () => {
     try {
@@ -45,9 +57,14 @@ function Budget({ nav, toast }) {
     toast('수기 데이터를 반영했어요');
   };
 
+  const applyInsight = (insight) => {
+    applyBudgetInsight(insight);
+    toast(`${insight.categoryLabel || insight.title} 한도를 반영했어요`);
+  };
+
   return (
     <div className="scroll screen-anim">
-      <TopBar title="예산 설계" right={
+      <TopBar title="소비분석 및 예산설계" right={
         <span className="pill pill-teal" style={{ fontSize:11.5 }}>실데이터</span>
       } />
 
@@ -61,7 +78,7 @@ function Budget({ nav, toast }) {
               </div>
             </div>
             <span className={'pill ' + (hasConnectedData ? 'pill-pos' : 'pill-warn')} style={{ fontSize:10.5 }}>
-              {hasConnectedData ? '연결됨' : '입력 필요'}
+              {syncState === 'loading' ? '동기화 중' : hasConnectedData ? '연결됨' : '입력 필요'}
             </span>
           </div>
 
@@ -156,15 +173,15 @@ function Budget({ nav, toast }) {
                   <span className="pill pill-pos" style={{ fontSize:11 }}>월 {won(al.save).replace('₩','')}원↓</span>
                 </div>
                 <p className="muted" style={{ fontSize:13, lineHeight:1.55 }}>{al.body}</p>
-                <button onClick={() => toast('절약 액션을 적용했어요')} className="btn btn-ghost"
+                <button onClick={() => applyInsight(al)} className="btn btn-ghost"
                   style={{ height:40, fontSize:13, marginTop:11, width:'auto', padding:'0 16px', display:'inline-flex' }}>
-                  이 절약 적용하기
+                  {al.actionLabel || '한도 적용하기'}
                 </button>
               </div>
             )) : (
               <div className="card" style={{ padding:'14px 16px' }}>
                 <p className="muted" style={{ fontSize:13, lineHeight:1.55 }}>
-                  거래내역과 예산 데이터가 연결되면 절약 포인트를 계산합니다.
+                  제이비스 소비 진단 결과가 저장되면 이 영역에 절약 포인트를 표시합니다.
                 </p>
               </div>
             )}
