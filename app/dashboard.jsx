@@ -5,10 +5,10 @@
 
 const {
   useState, useEffect, useRef, Logo, Icon, SectionLabel, stagger, MarkdownBubble,
-  USER, ASSETS, AI_DIAGNOSIS, STARTER_FEATURE_CHIPS,
+  USER, ASSETS, BUDGET, STARTER_FEATURE_CHIPS,
   loadJaybisChatMessages, saveJaybisChatMessages, createJaybisMessageId,
   saveAppSettings, getRuntimeSnapshot, saveRuntimeData,
-  applyBudgetInsight,
+  useJaybisRuntimeData, refreshSupabaseTransactions, refreshSupabaseBudgetInsights,
   runJaybisOpenAIConversation, getJaybisOpenAIConfigStatus,
   selectJaybisToolCall, executeJaybisToolCall, getJaybisToolSequence,
   summarizeEasy, speakText, won, manwon, pct,
@@ -113,6 +113,12 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
   const emitAi = (text) => {
     const next = summarizeEasy(text, settings);
     push({ who: 'ai', kind: 'text', text: next });
+    if (settings.voiceGuide) speakText(next, { rate: settings.ttsSpeed });
+  };
+
+  const emitAiWithCta = (text, cta) => {
+    const next = summarizeEasy(text, settings);
+    push({ who: 'ai', kind: 'textCta', text: next, cta });
     if (settings.voiceGuide) speakText(next, { rate: settings.ttsSpeed });
   };
 
@@ -316,6 +322,124 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     return `좋아요. 첫 월급 예산을 실제 예산 화면에 반영했어요. 필수비 ${won(data.buckets[0]?.amount || 0)}, 여유비 ${won(data.buckets[1]?.amount || 0)}, 저축·투자 ${won(data.buckets[2]?.amount || 0)}로 저장했습니다.`;
   };
 
+  const saveSpendingDiagnosisReport = (diagnosis = {}) => {
+    const snapshot = getRuntimeSnapshot();
+    const currentBudget = snapshot.raw.budget || snapshot.budget || {};
+    const salary = Number(diagnosis.salary || currentBudget.salary || 0);
+    const spend = Number(diagnosis.spend || 0);
+    const spendRate = salary ? spend / salary * 100 : Number(diagnosis.spendRate || 0);
+    const categories = Array.isArray(currentBudget.categories) ? currentBudget.categories : [];
+    const topCategories = categories.length
+      ? [...categories]
+          .filter((category) => Number(category.used || 0) > 0)
+          .sort((a, b) => Number(b.used || 0) - Number(a.used || 0))
+          .slice(0, 3)
+          .map((category) => ({
+            label: category.label || category.category || '기타',
+            amount: Number(category.used || 0),
+            plan: Number(category.plan || 0),
+            bucket: category.bucket || '',
+            ratio: spend ? Number(category.used || 0) / spend * 100 : 0,
+          }))
+      : (diagnosis.topCategories || []).slice(0, 3).map((category) => ({
+          label: category.label || '기타',
+          amount: Number(category.value || category.amount || 0),
+          ratio: spend ? Number(category.value || category.amount || 0) / spend * 100 : 0,
+        }));
+    const fixedOrNonCuttablePattern = /(비상금|저축|투자|월세|주거|관리비|대출|보험|공과금|통신|교통|의료|병원|약국)/;
+    const spendTransactions = (snapshot.transactions || [])
+      .filter((transaction) => transaction.type === 'spend' && transaction.date);
+    const monthKey = spendTransactions[0]?.date?.slice(0, 7) || new Date().toISOString().slice(0, 7);
+    const monthTransactions = spendTransactions.filter((transaction) => transaction.date?.slice(0, 7) === monthKey);
+    const latestDay = monthTransactions.reduce((max, transaction) => {
+      const day = Number(transaction.date?.slice(8, 10));
+      return Number.isFinite(day) ? Math.max(max, day) : max;
+    }, new Date().getDate());
+    const [year, month] = monthKey.split('-').map(Number);
+    const daysInMonth = year && month ? new Date(year, month, 0).getDate() : 30;
+    const monthProgress = Math.min(1, Math.max(0.05, latestDay / daysInMonth));
+    const variableSavingCandidates = categories.length
+      ? [...categories]
+          .filter((category) => {
+            const amount = Number(category.used || 0);
+            const label = String(category.label || category.category || '');
+            if (!amount) return false;
+            if (fixedOrNonCuttablePattern.test(label)) return false;
+            return category.bucket === 'want' || (!category.bucket && amount > 0);
+          })
+          .sort((a, b) => Number(b.used || 0) - Number(a.used || 0))
+          .slice(0, 2)
+          .map((category) => ({
+            label: category.label || category.category || '기타',
+            amount: Number(category.used || 0),
+            plan: Number(category.plan || 0),
+            bucket: category.bucket || 'want',
+            ratio: spend ? Number(category.used || 0) / spend * 100 : 0,
+          }))
+      : topCategories
+          .filter((category) => !fixedOrNonCuttablePattern.test(String(category.label || '')))
+          .slice(0, 2);
+
+    const status = spendRate > 75 ? '주의' : spendRate > 60 ? '관찰' : '안정';
+    const report = {
+      generatedAt: new Date().toISOString(),
+      source: diagnosis.source || 'mydata',
+      status,
+      summary: `이번 달 지출은 ${won(spend)}이고, 월급 대비 ${pct(spendRate, 1)} 수준입니다.`,
+      metrics: [
+        { label: '총지출', value: won(spend) },
+        { label: '소비율', value: pct(spendRate, 1) },
+        { label: '고정비', value: won(diagnosis.fixed || 0) },
+        { label: '변동비', value: won(diagnosis.variable || 0) },
+      ],
+      topCategories,
+      savingBasis: '절약 포인트는 비상금·주거비 같은 고정/필수 지출을 제외하고 유동비 안에서만 골랐습니다.',
+    };
+
+    const alerts = variableSavingCandidates
+      .map((category) => {
+        const plan = Number(category.plan || 0);
+        const usedRatio = plan ? category.amount / plan : 0;
+        const projected = category.amount / monthProgress;
+        const projectedRatio = plan ? projected / plan : 0;
+        const overAmount = Math.max(0, category.amount - plan);
+        const isOverBudget = plan > 0 && usedRatio >= 1;
+        const isFastPace = plan > 0 && monthProgress < 0.85 && usedRatio > monthProgress + 0.18 && projectedRatio >= 1.12;
+        const isLargeVariable = !plan && category.ratio >= 18 && category.amount >= 50000;
+        if (!isOverBudget && !isFastPace && !isLargeVariable) return null;
+        const save = Math.max(10000, Math.round(category.amount * 0.12 / 1000) * 1000);
+        const reason = isOverBudget
+          ? `이미 예산을 ${won(overAmount)} 초과했어요.`
+          : isFastPace
+            ? `이번 달이 ${Math.round(monthProgress * 100)}% 지났는데 예산의 ${Math.round(usedRatio * 100)}%를 사용했어요.`
+            : `예산이 없지만 전체 지출의 ${pct(category.ratio, 1)}를 차지하는 큰 유동비예요.`;
+        return {
+          id: `diagnosis-${Date.now()}-${category.label}`,
+          type: 'diagnosis',
+          title: `${category.label} 유동비 점검`,
+          body: `${reason} 이미 사용한 금액은 바꾸지 않고, 다음 소비진단 전까지 관찰 포인트로 유지합니다.`,
+          categoryLabel: category.label,
+          bucket: category.bucket,
+          save,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 2);
+
+    saveRuntimeData({
+      ...snapshot.raw,
+      budget: {
+        ...currentBudget,
+        spendingReport: report,
+        alerts,
+        nextMonthTip: alerts.length
+          ? `${status} 단계예요. 고정비는 유지하고 ${alerts[0].categoryLabel} 같은 유동비 사용 속도를 먼저 관찰해보세요.`
+          : `${status} 단계예요. 이번 진단에서는 예산 초과나 사용 속도 과다 신호가 뚜렷하지 않았습니다.`,
+      },
+    });
+    return report;
+  };
+
   const askToApplyBudgetPlan = (data, note = '이 예산안을 예산 화면에 바로 반영할 수 있어요.') => {
     askToRunAction({
       id: `budget-${Date.now()}`,
@@ -325,8 +449,23 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     });
   };
 
+  const spendingReportCta = {
+    label: '소비진단 리포트 확인',
+    target: 'budget',
+    icon: 'chart',
+  };
+
   const runConfirmedAction = (action) => {
     if (!action) return false;
+    if (action.type === 'toggleSeniorMode') {
+      saveAppSettings({ seniorMode: action.value });
+      toast(action.value ? '시니어 모드를 켰어요' : '시니어 모드를 껐어요');
+      emitAi(action.value
+        ? '시니어 모드를 켰어요. 홈 화면이 큰 글씨와 쉬운 설명 중심으로 바뀌고, MY 설정에도 반영됩니다.'
+        : '시니어 모드를 껐어요. 홈 화면을 기본 모드로 다시 사용할 수 있어요.');
+      setPendingAction(null);
+      return true;
+    }
     if (action.type === 'toggleVoice') {
       saveAppSettings({ voiceGuide: action.value });
       toast(action.value ? '음성 안내를 켰어요' : '음성 안내를 껐어요');
@@ -337,13 +476,6 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     if (action.type === 'applyBudgetPlan') {
       emitAi(applyBudgetPlan(action.data));
       setCards(buildFeatureCards('budgetPlanResult', action.data, nav));
-      setPendingAction(null);
-      return true;
-    }
-    if (action.type === 'applyBudgetInsight') {
-      applyBudgetInsight(action.data);
-      toast(`${action.data.categoryLabel || action.data.title} 한도를 반영했어요`);
-      emitAi(`${action.data.categoryLabel || action.data.title} 한도를 ${won(action.data.suggestedLimit || action.data.actionPayload?.limit || 0)}로 조정했어요. 예산 페이지에도 반영했습니다.`);
       setPendingAction(null);
       return true;
     }
@@ -362,7 +494,28 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
 
   const parseActionRequest = (text) => {
     const t = text.replace(/\s/g, '');
+    const wantsSeniorMode = /(시니어|senior|큰글씨|큰글자|쉬운설명|고령|어르신)/i.test(t);
     const wantsVoice = /(tts|음성|읽어|소리)/i.test(t);
+    if (wantsSeniorMode && /(꺼|끄|off|해제|기본|일반)/i.test(t)) {
+      return {
+        id: `senior-off-${Date.now()}`,
+        type: 'toggleSeniorMode',
+        value: false,
+        confirmText: '시니어 모드를 끄면 홈 화면이 기본 화면으로 돌아가고, 큰 글씨·쉬운 설명 중심 표시가 해제됩니다.',
+        yesLabel: '끄기',
+        noLabel: '취소',
+      };
+    }
+    if (wantsSeniorMode && /(켜|on|시작|활성|설정|바꿔|전환)/i.test(t)) {
+      return {
+        id: `senior-on-${Date.now()}`,
+        type: 'toggleSeniorMode',
+        value: true,
+        confirmText: '시니어 모드를 켜면 홈 화면이 큰 글씨와 쉬운 설명 중심으로 바뀌고, 음성 인식 기능을 더 쉽게 사용할 수 있어요.',
+        yesLabel: '켜기',
+        noLabel: '취소',
+      };
+    }
     if (/(마이데이터|mydata)/i.test(t) && /(연동|연결|입력|데이터)/i.test(t)) {
       return {
         id: `mydata-${Date.now()}`,
@@ -382,25 +535,6 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         yesLabel: '이동',
         noLabel: '나중에',
       };
-    }
-    if (/(절약|한도|줄여|아껴|적용|반영)/i.test(t) && /(적용|반영|줄여|낮춰|해줘)/i.test(t)) {
-      const snapshot = getRuntimeSnapshot();
-      const alerts = snapshot.budget?.alerts || [];
-      const matched = alerts.find((alert) => (
-        (alert.categoryLabel && t.includes(alert.categoryLabel.replace(/\s/g, ''))) ||
-        (alert.category && t.includes(String(alert.category).replace(/\s/g, ''))) ||
-        (alert.bucket && t.includes(String(alert.bucket).replace(/\s/g, '')))
-      )) || alerts[0];
-      if (matched) {
-        return {
-          id: `insight-${Date.now()}`,
-          type: 'applyBudgetInsight',
-          data: matched,
-          confirmText: `${matched.title} 제안을 적용해 ${matched.categoryLabel || '해당 항목'} 한도를 ${won(matched.suggestedLimit || matched.actionPayload?.limit || 0)}로 조정할 수 있어요.`,
-          yesLabel: '적용',
-          noLabel: '취소',
-        };
-      }
     }
     if (wantsVoice && /(꺼|끄|off|중지|그만)/i.test(t)) {
       return {
@@ -429,9 +563,16 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     const seq = getJaybisToolSequence(toolCall.name);
     push({ who: 'ai', kind: 'tools', seq, toolCall });
     const result = executeJaybisToolCall(toolCall);
-    emitAi(result.data.summary);
+    if (result.kind === 'spendingDiagnosisResult') {
+      emitAiWithCta(result.data.summary, spendingReportCta);
+    } else {
+      emitAi(result.data.summary);
+    }
     if (result.kind === 'budgetPlanResult') {
       askToApplyBudgetPlan(result.data, '방금 만든 첫 월급 예산안을 예산 화면에 바로 반영할 수 있어요.');
+    }
+    if (result.kind === 'spendingDiagnosisResult') {
+      saveSpendingDiagnosisReport(result.data);
     }
     setChips(result.data.nextChips || STARTER_FEATURE_CHIPS);
     setCards(buildFeatureCards(result.kind, result.data, nav));
@@ -546,6 +687,9 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         openBudgetDesigner(prompt);
         return;
       }
+      const localDiagnosisResult = localToolCall.name === 'mydata_spending_diagnosis'
+        ? executeJaybisToolCall(localToolCall)
+        : null;
 
       const remote = await runJaybisOpenAIConversation(nextMsgs, {
         userName: USER?.name,
@@ -564,9 +708,18 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
           push({ who: 'ai', kind: 'tools', seq, toolCall: remote.toolCall });
         }
 
-        if (remote.text) emitAi(remote.text);
+        const isSpendingDiagnosis = result?.kind === 'spendingDiagnosisResult' || localDiagnosisResult?.kind === 'spendingDiagnosisResult';
+        if (remote.text) {
+          if (isSpendingDiagnosis) emitAiWithCta(remote.text, spendingReportCta);
+          else emitAi(remote.text);
+        }
         if (result?.kind === 'budgetPlanResult') {
           askToApplyBudgetPlan(result.data, '방금 만든 첫 월급 예산안을 예산 화면에 바로 반영할 수 있어요.');
+        }
+        if (result?.kind === 'spendingDiagnosisResult') {
+          saveSpendingDiagnosisReport(result.data);
+        } else if (localDiagnosisResult?.kind === 'spendingDiagnosisResult') {
+          saveSpendingDiagnosisReport(localDiagnosisResult.data);
         }
         const nextChips = result?.data?.nextChips || STARTER_FEATURE_CHIPS;
         setChips(nextChips);
@@ -645,7 +798,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       >
         <section className="card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 12px' }}>
           <div ref={scrollRef} onScroll={rememberScroll} className="scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 2 }}>
-            {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} /></div>)}
+            {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} onNavigate={nav} /></div>)}
             {busy && <TypingBubble />}
           </div>
 
@@ -734,7 +887,7 @@ function buildFeatureCards(kind, data, nav, text) {
   return base;
 }
 
-function Message({ m, onChip, onConfirm, onBudgetSubmit }) {
+function Message({ m, onChip, onConfirm, onBudgetSubmit, onNavigate }) {
   if (m.who === 'me') return (
     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
       <div className="bubble bubble-me">{m.text}</div>
@@ -745,12 +898,39 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit }) {
       <MarkdownBubble text={m.text} />
     </div>
   );
+  if (m.kind === 'textCta') return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+      <div style={{ maxWidth: '86%' }}>
+        <MarkdownBubble text={m.text} />
+        {m.cta && (
+          <button
+            onClick={() => onNavigate && onNavigate(m.cta.target || 'budget')}
+            className="btn btn-primary"
+            style={{ height: 40, width: 'auto', display: 'inline-flex', marginTop: 8, padding: '0 15px', fontSize: 13.5, borderRadius: 12, boxShadow: 'none' }}
+          >
+            <Icon name={m.cta.icon || 'chevR'} size={16} color="#fff" /> {m.cta.label}
+          </button>
+        )}
+      </div>
+    </div>
+  );
   if (m.kind === 'tools') return <ToolSequence seq={m.seq} />;
   if (m.kind === 'chips') return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingLeft: 2 }}>
       {m.items.map((q, i) => (
         <button key={i} onClick={() => onChip(q)} className="pill" style={{ background: 'var(--card)', border: '1px solid var(--teal-100)', color: 'var(--teal-700)', fontSize: 12.2, padding: '8px 11px' }}>{q}</button>
       ))}
+    </div>
+  );
+  if (m.kind === 'cta') return (
+    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+      <button
+        onClick={() => onNavigate && onNavigate(m.target || 'budget')}
+        className="btn btn-primary"
+        style={{ height: 40, width: 'auto', padding: '0 15px', fontSize: 13.5, borderRadius: 12, boxShadow: 'none' }}
+      >
+        <Icon name={m.icon || 'chevR'} size={16} color="#fff" /> {m.label}
+      </button>
     </div>
   );
   if (m.kind === 'confirm') return (
@@ -1034,12 +1214,20 @@ const HOME_FEATURES = [
 ];
 
 function Home({ nav, toast }) {
-  const [hide, setHide] = useState(false);
-  const a = ASSETS;
-  const mask = (s) => hide ? '••••••' : s;
-  const savingsNote = a.cashflow.income
-    ? `이번 달 여유 자금은 ${manwon(a.cashflow.left)}원이에요`
-    : '실제 자산 데이터가 연결되면 진단 결과를 보여드려요';
+  const [snapshot] = useJaybisRuntimeData();
+  const [syncState, setSyncState] = useState('idle');
+  const b = snapshot?.budget || BUDGET;
+  const hasConnectedData = Boolean((snapshot?.transactions || []).length || snapshot?.budget?.salary);
+
+  useEffect(() => {
+    let alive = true;
+    setSyncState('loading');
+    refreshSupabaseTransactions()
+      .then(() => refreshSupabaseBudgetInsights())
+      .then(() => { if (alive) setSyncState('done'); })
+      .catch(() => { if (alive) setSyncState('error'); });
+    return () => { alive = false; };
+  }, []);
 
   return (
     <div className="scroll screen-anim">
@@ -1115,41 +1303,50 @@ function Home({ nav, toast }) {
         </div>
 
         <div style={{ marginTop:24, ...stagger(1) }}>
-          <SectionLabel action="진단 상세" onAction={() => toast('자산진단 리포트')}>
-            내 자산 한눈에
-          </SectionLabel>
-
-          <div className="card" style={{ background:'linear-gradient(160deg, var(--teal-800), var(--teal-700))', color:'#fff', boxShadow:'var(--shadow-md)' }}>
-            <div className="between">
-              <div className="row" style={{ gap:7 }}>
-                <span style={{ fontSize:13, color:'rgba(255,255,255,.78)', fontWeight:600 }}>순자산</span>
-                <button onClick={() => setHide(h => !h)}>
-                  <Icon name="eye" size={15} color="rgba(255,255,255,.7)" />
-                </button>
+          <div className="between" style={{ marginBottom:10, alignItems:'flex-end', gap:12 }}>
+            <div>
+              <div style={{ fontSize:15, fontWeight:800, color:'var(--ink)' }}>소비 데이터</div>
+              <div className="muted" style={{ fontSize:11.5, marginTop:2 }}>
+                거래내역을 기준으로 자동 분석합니다
               </div>
-              <span className="pill" style={{ background:'rgba(255,255,255,.16)', color:'#fff', fontSize:11 }}>
-                <Icon name="sparkF" size={12} color="#fff" /> {AI_DIAGNOSIS.grade}
+            </div>
+            <span className={'pill ' + (hasConnectedData ? 'pill-pos' : 'pill-warn')} style={{ fontSize:10.5, flex:'0 0 auto' }}>
+              {syncState === 'loading' ? '동기화 중' : hasConnectedData ? '연결됨' : '데이터 없음'}
+            </span>
+          </div>
+
+          <div className="card" style={{ background:'var(--teal-900)', color:'#fff' }}>
+            <div className="between">
+              <div>
+                <div style={{ fontSize:12.5, color:'rgba(255,255,255,.7)', fontWeight:600 }}>세후 월급</div>
+                <div className="tnum" style={{ fontSize:26, fontWeight:800, marginTop:3 }}>{won(b.salary)}</div>
+              </div>
+              <span className="pill pill-ghost" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)' }}>
+                <Icon name="sparkF" size={13} color="var(--teal-300)" /> 50·30·20 룰
               </span>
             </div>
 
-            <b className="tnum" style={{ fontSize:33, fontWeight:800, letterSpacing:'-.8px', display:'block', marginTop:6 }}>
-              {mask(won(a.netWorth))}
-            </b>
-
-            <div className="row" style={{ gap:10, marginTop:16 }}>
-              <MiniStat label="총자산" value={mask(manwon(a.totalAssets) + '원')} />
-              <MiniStat label="총부채" value={mask(manwon(a.totalDebt) + '원')} />
-              <MiniStat label="이번 달 여유" value={mask(manwon(a.cashflow.left) + '원')} accent />
+            <div style={{ display:'flex', height:16, borderRadius:8, overflow:'hidden', gap:3, marginTop:18 }}>
+              {b.buckets.map((bk,i) => (
+                <div key={i} style={{ flex:bk.ratio, background:bk.tone, position:'relative' }} />
+              ))}
             </div>
-
-            <div className="row" style={{ gap:18, marginTop:18, paddingTop:16, borderTop:'1px solid rgba(255,255,255,.16)' }}>
-              <MiniGauge value={a.debtRatio} label="부채비율" txt={pct(a.debtRatio, 1)} />
-              <MiniGauge value={a.retireReady} label="은퇴준비율" txt={pct(a.retireReady)} warn />
-              <div style={{ flex:1, alignSelf:'center' }}>
-                <p style={{ fontSize:11.5, lineHeight:1.5, color:'rgba(255,255,255,.82)' }}>
-                  {savingsNote}
-                </p>
-              </div>
+            <div className="row" style={{ gap:8, marginTop:14 }}>
+              {b.buckets.map((bk,i) => {
+                const over = bk.used > bk.plan;
+                return (
+                  <div key={i} style={{ flex:1, background:'rgba(255,255,255,.1)', borderRadius:12, padding:'10px 11px' }}>
+                    <div className="row" style={{ gap:6 }}>
+                      <span style={{ width:8, height:8, borderRadius:3, background:bk.tone }} />
+                      <span style={{ fontSize:11.5, fontWeight:700 }}>{bk.label} {bk.ratio}%</span>
+                    </div>
+                    <div className="tnum" style={{ fontSize:13.5, fontWeight:800, marginTop:7 }}>{manwon(bk.used)}</div>
+                    <div style={{ fontSize:10.5, color: over ? '#fca5a5' : 'rgba(255,255,255,.6)', fontWeight:600, marginTop:1 }}>
+                      / {manwon(bk.plan)} {over ? '초과' : '여유'}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1182,33 +1379,6 @@ function Home({ nav, toast }) {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, accent }) {
-  return (
-    <div style={{ flex:1, background:'rgba(255,255,255,.1)', borderRadius:13, padding:'10px 12px' }}>
-      <div style={{ fontSize:11, color:'rgba(255,255,255,.7)', fontWeight:600 }}>{label}</div>
-      <div className="tnum" style={{ fontSize:14, fontWeight:800, marginTop:3, color: accent ? 'var(--teal-300)' : '#fff' }}>{value}</div>
-    </div>
-  );
-}
-
-function MiniGauge({ value, label, txt, warn }) {
-  const r = 22;
-  const c = 2 * Math.PI * r;
-  const off = c * (1 - Math.max(0, Math.min(100, value)) / 100);
-  return (
-    <div style={{ textAlign:'center' }}>
-      <span style={{ position:'relative', display:'inline-flex' }}>
-        <svg width="54" height="54" style={{ transform:'rotate(-90deg)' }}>
-          <circle cx="27" cy="27" r={r} fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="5" />
-          <circle cx="27" cy="27" r={r} fill="none" stroke={warn ? '#fbbf24' : '#fff'} strokeWidth="5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off} style={{ transition:'stroke-dashoffset 1s ease' }} />
-        </svg>
-        <span style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800 }} className="tnum">{txt}</span>
-      </span>
-      <div style={{ fontSize:11, color:'rgba(255,255,255,.78)', fontWeight:600, marginTop:5 }}>{label}</div>
     </div>
   );
 }

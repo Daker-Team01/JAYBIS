@@ -57,6 +57,7 @@ const EMPTY_BUDGET = {
   categories: [],
   peers: [],
   alerts: [],
+  spendingReport: null,
   nextMonthTip: '실제 지출 데이터가 연결되면 다음 달 예산 보정안을 계산합니다.',
 };
 
@@ -193,6 +194,7 @@ function normalizeBudget(budget = {}) {
     categories: Array.isArray(budget.categories) ? budget.categories : [],
     peers: Array.isArray(budget.peers) ? budget.peers : [],
     alerts: Array.isArray(budget.alerts) ? budget.alerts : [],
+    spendingReport: budget.spendingReport || null,
   };
 }
 
@@ -830,7 +832,9 @@ function buildBudgetFromTransactions(transactions = [], previousBudget = {}) {
     salary,
     buckets,
     categories,
-    alerts: [],
+    alerts: Array.isArray(previousBudget.alerts)
+      ? previousBudget.alerts.filter((alert) => alert?.type === 'diagnosis')
+      : [],
     nextMonthTip: normalized.length
       ? `Supabase 소비내역 ${normalized.length}건을 기준으로 예산 사용액을 다시 계산했어요.`
       : previousBudget.nextMonthTip,
@@ -899,11 +903,12 @@ async function updateSupabaseBudgetInsightStatus(id, status = 'applied') {
 async function refreshSupabaseBudgetInsights(options = {}) {
   const alerts = await fetchSupabaseBudgetInsights(options);
   const snapshot = getRuntimeSnapshot();
+  const diagnosisAlerts = (snapshot.budget?.alerts || []).filter((alert) => alert?.type === 'diagnosis');
   return saveRuntimeData({
     ...snapshot.raw,
     budget: {
       ...(snapshot.raw.budget || snapshot.budget || {}),
-      alerts,
+      alerts: [...diagnosisAlerts, ...alerts],
     },
   });
 }

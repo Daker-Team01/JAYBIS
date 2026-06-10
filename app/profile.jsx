@@ -90,7 +90,7 @@
               </div>
             </div>
             <p className="muted" style={{ fontSize:11.5, marginTop:8, lineHeight:1.5, padding:'0 2px' }}>
-              소득·자산 변화를 감지해 트랙은 자동으로 전환돼요. 결혼·출산·주택 마련 이벤트도 곧 지원됩니다.
+               결혼·출산·주택 마련 이벤트도 곧 지원됩니다.
             </p>
           </div>
 
