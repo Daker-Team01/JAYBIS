@@ -4,26 +4,18 @@
 
 const {
   useState, useEffect, TopBar, SectionLabel, Icon, Bar, stagger,
-  USER, BUDGET, useJaybisRuntimeData, saveMyDataRuntimeData, saveManualRuntimeData,
-  refreshSupabaseTransactions, refreshSupabaseBudgetInsights, applyBudgetInsight, won, manwon,
+  USER, BUDGET, useJaybisRuntimeData,
+  refreshSupabaseTransactions, refreshSupabaseBudgetInsights, applyBudgetInsight, won, manwon, pct,
 } = window;
 
 function Budget({ nav, toast }) {
   const [snapshot] = useJaybisRuntimeData();
   const b = snapshot?.budget || BUDGET;
+  const user = snapshot?.user || USER;
   const [tab, setTab] = useState('all'); // all | need | want | save
-  const [inputMode, setInputMode] = useState(() => {
-    const mode = window.__JAYBIS_BUDGET_INPUT_MODE || 'mydata';
-    window.__JAYBIS_BUDGET_INPUT_MODE = '';
-    return mode;
-  });
-  const [mydataText, setMydataText] = useState('');
-  const [manual, setManual] = useState({ salary: '', need: '', want: '', save: '', memo: '' });
-  const [inputError, setInputError] = useState('');
   const [syncState, setSyncState] = useState('idle');
   const cats = tab === 'all' ? b.categories : b.categories.filter(c => c.bucket === tab);
   const hasConnectedData = Boolean((snapshot?.transactions || []).length || b.salary);
-  const dataSource = snapshot?.raw?.metadata?.dataSource || '';
 
   useEffect(() => {
     let alive = true;
@@ -34,28 +26,6 @@ function Budget({ nav, toast }) {
       .catch(() => { if (alive) setSyncState('error'); });
     return () => { alive = false; };
   }, []);
-
-  const applyMyData = () => {
-    try {
-      const parsed = JSON.parse(mydataText);
-      saveMyDataRuntimeData(parsed);
-      setInputError('');
-      setMydataText('');
-      toast('마이데이터를 연결했어요');
-    } catch (err) {
-      setInputError('JSON 형식을 확인해주세요.');
-    }
-  };
-
-  const applyManual = () => {
-    if (!manual.salary) {
-      setInputError('세후 월급을 먼저 입력해주세요.');
-      return;
-    }
-    saveManualRuntimeData(manual);
-    setInputError('');
-    toast('수기 데이터를 반영했어요');
-  };
 
   const applyInsight = (insight) => {
     applyBudgetInsight(insight);
@@ -69,57 +39,16 @@ function Budget({ nav, toast }) {
       } />
 
       <div style={{ padding:'2px 18px 26px' }} className="stagger">
-        <div className="card" style={{ ...stagger(0), marginBottom:18, padding:'15px 16px' }}>
-          <div className="between" style={{ marginBottom:12 }}>
-            <div>
-              <div style={{ fontSize:15, fontWeight:800, color:'var(--ink)' }}>데이터 입력</div>
-              <div className="muted" style={{ fontSize:12, marginTop:2 }}>
-                {hasConnectedData ? `현재 ${dataSource || '저장된'} 데이터가 적용 중이에요` : '마이데이터를 먼저 연결하고, 없으면 수기로 입력하세요'}
-              </div>
+        <div className="between" style={{ marginBottom:12, ...stagger(0) }}>
+          <div>
+            <div style={{ fontSize:15, fontWeight:800, color:'var(--ink)' }}>소비 데이터</div>
+            <div className="muted" style={{ fontSize:12, marginTop:2 }}>
+              Supabase 거래내역을 기준으로 자동 분석합니다
             </div>
-            <span className={'pill ' + (hasConnectedData ? 'pill-pos' : 'pill-warn')} style={{ fontSize:10.5 }}>
-              {syncState === 'loading' ? '동기화 중' : hasConnectedData ? '연결됨' : '입력 필요'}
-            </span>
           </div>
-
-          <div className="seg" style={{ marginBottom:12 }}>
-            <button className={inputMode === 'mydata' ? 'on' : ''} onClick={() => setInputMode('mydata')}>마이데이터</button>
-            <button className={inputMode === 'manual' ? 'on' : ''} onClick={() => setInputMode('manual')}>수기 입력</button>
-          </div>
-
-          {inputMode === 'mydata' ? (
-            <div>
-              <textarea
-                value={mydataText}
-                onChange={(e) => setMydataText(e.target.value)}
-                placeholder="마이데이터 JSON을 붙여넣으세요"
-                style={{ width:'100%', minHeight:116, resize:'vertical', border:'1px solid var(--line)', borderRadius:12, padding:'11px 12px', outline:'none', fontSize:12.5, lineHeight:1.5, color:'var(--ink)', background:'var(--bg)' }}
-              />
-              <button onClick={applyMyData} className="btn btn-primary" style={{ height:42, fontSize:14, marginTop:10, boxShadow:'none' }}>
-                마이데이터 연결하기
-              </button>
-            </div>
-          ) : (
-            <div style={{ display:'grid', gap:9 }}>
-              <ManualInput label="세후 월급" value={manual.salary} onChange={(v) => setManual((m) => ({ ...m, salary:v }))} />
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                <ManualInput label="필수비 사용액" value={manual.need} onChange={(v) => setManual((m) => ({ ...m, need:v }))} />
-                <ManualInput label="여유비 사용액" value={manual.want} onChange={(v) => setManual((m) => ({ ...m, want:v }))} />
-              </div>
-              <ManualInput label="저축·투자액" value={manual.save} onChange={(v) => setManual((m) => ({ ...m, save:v }))} />
-              <input
-                value={manual.memo}
-                onChange={(e) => setManual((m) => ({ ...m, memo:e.target.value }))}
-                placeholder="메모 예: 첫 월급 기준"
-                style={{ height:40, border:'1px solid var(--line)', borderRadius:11, padding:'0 12px', outline:'none', color:'var(--ink)', background:'var(--bg)' }}
-              />
-              <button onClick={applyManual} className="btn btn-primary" style={{ height:42, fontSize:14, boxShadow:'none' }}>
-                수기 데이터 반영하기
-              </button>
-            </div>
-          )}
-
-          {inputError && <p style={{ color:'var(--neg)', fontSize:12, marginTop:8, fontWeight:700 }}>{inputError}</p>}
+          <span className={'pill ' + (hasConnectedData ? 'pill-pos' : 'pill-warn')} style={{ fontSize:10.5 }}>
+            {syncState === 'loading' ? '동기화 중' : hasConnectedData ? '연결됨' : '데이터 없음'}
+          </span>
         </div>
 
         {/* ---- 50/30/20 요약 ---- */}
@@ -190,40 +119,44 @@ function Budget({ nav, toast }) {
 
         {/* ---- 또래 비교 ---- */}
         <div style={{ marginTop:22, ...stagger(3) }}>
-          <SectionLabel>{USER.age ? `${USER.age}세 또래와 비교` : '또래와 비교'}</SectionLabel>
+          <SectionLabel>{user.age ? `${user.age}세 또래 지출 비중과 비교` : '또래 지출 비중과 비교'}</SectionLabel>
           <div className="card">
             {b.peers.length ? b.peers.map((p,i) => {
-              const unit = p.unit === '%';
-              const meV = unit ? p.me : p.me;
-              const peerV = unit ? p.peer : p.peer;
-              const max = Math.max(meV, peerV) * 1.15;
+              const meRatio = Number(p.meRatio || p.me || 0);
+              const peerRatio = Number(p.peerRatio || p.peer || 0);
+              const max = Math.max(meRatio, peerRatio, 1) * 1.15;
+              const statusClass = p.status === '높음' ? 'pill-neg' : p.status === '낮음' ? 'pill-pos' : 'pill-teal';
               return (
                 <div key={i} style={{ padding:'12px 0', borderTop: i? '1px solid var(--line)':'none' }}>
                   <div className="between" style={{ marginBottom:9 }}>
                     <span style={{ fontSize:13.5, fontWeight:700, color:'var(--ink)' }}>{p.label}</span>
-                    {p.over !== undefined && (
-                      <span className={'pill ' + (p.over ? 'pill-neg':'pill-pos')} style={{ fontSize:10.5 }}>
-                        {p.over ? '또래보다 많음' : '또래보다 좋음'}
+                    {p.status && (
+                      <span className={'pill ' + statusClass} style={{ fontSize:10.5 }}>
+                        {p.status}
                       </span>
                     )}
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
                     <div className="row" style={{ gap:9 }}>
                       <span style={{ fontSize:11, width:30, color:'var(--teal-700)', fontWeight:700 }}>나</span>
-                      <span style={{ flex:1 }}><Bar value={meV/max*100} color="var(--teal-600)" height={8} /></span>
-                      <span className="tnum" style={{ fontSize:11.5, fontWeight:700, color:'var(--ink)', width:54, textAlign:'right' }}>{unit? p.me+'%' : won(p.me)}</span>
+                      <span style={{ flex:1 }}><Bar value={meRatio/max*100} color="var(--teal-600)" height={8} /></span>
+                      <span className="tnum" style={{ fontSize:11.5, fontWeight:700, color:'var(--ink)', width:96, textAlign:'right' }}>
+                        {won(p.me)} · {pct(meRatio, 1)}
+                      </span>
                     </div>
                     <div className="row" style={{ gap:9 }}>
                       <span style={{ fontSize:11, width:30, color:'var(--slate-400)', fontWeight:700 }}>또래</span>
-                      <span style={{ flex:1 }}><Bar value={peerV/max*100} color="var(--slate-300)" height={8} /></span>
-                      <span className="tnum" style={{ fontSize:11.5, fontWeight:700, color:'var(--slate-500)', width:54, textAlign:'right' }}>{unit? p.peer+'%' : won(p.peer)}</span>
+                      <span style={{ flex:1 }}><Bar value={peerRatio/max*100} color="var(--slate-300)" height={8} /></span>
+                      <span className="tnum" style={{ fontSize:11.5, fontWeight:700, color:'var(--slate-500)', width:96, textAlign:'right' }}>
+                        {pct(peerRatio, 1)}
+                      </span>
                     </div>
                   </div>
                 </div>
               );
             }) : (
               <p className="muted" style={{ fontSize:13, lineHeight:1.55, padding:'12px 0' }}>
-                비교 데이터가 연결되면 이 영역에 또래 대비 소비/저축 지표를 표시합니다.
+                차이가 5%p 이상인 업종이 있으면 이 영역에 표시합니다.
               </p>
             )}
           </div>
@@ -285,21 +218,6 @@ function Budget({ nav, toast }) {
         </div>
       </div>
     </div>
-  );
-}
-
-function ManualInput({ label, value, onChange }) {
-  return (
-    <label style={{ display:'grid', gap:5 }}>
-      <span style={{ fontSize:12, fontWeight:800, color:'var(--slate-600)' }}>{label}</span>
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="원 단위"
-        style={{ height:40, border:'1px solid var(--line)', borderRadius:11, padding:'0 12px', outline:'none', color:'var(--ink)', background:'var(--bg)' }}
-      />
-    </label>
   );
 }
 

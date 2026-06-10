@@ -140,6 +140,7 @@ const JAYBIS_SYSTEM_PROMPT = [
   '대상은 사회초년생이며, 첫 월급 예산, 마이데이터/수기 소비 진단, 청년 금융상품 추천, 상품 추천 흐름 속 금융코칭을 다룬다.',
   '사용자의 의도를 파악해 필요한 경우에만 도구를 호출하고, 도구 결과를 바탕으로 짧고 친절하게 답한다.',
   '설명은 쉬운 한국어로 하며, "왜 이 상품인지"와 "지금 사용자가 다음에 무엇을 하면 되는지"를 함께 안내한다.',
+  '금융상품 추천이나 계좌 개설 요청에서는 조건에 맞는 JB금융그룹 계열 상품을 1순위로 우선 제안하고, 다른 상품은 보조 선택지로 비교한다.',
   '금융상품 추천은 나이, 소득, 무주택 여부, 납입 가능액을 기준으로 필터링하고, 코칭은 상품 추천 흐름 안에 자연스럽게 섞는다.',
   '응답은 불필요하게 길지 않게, 실행 가능한 다음 행동을 포함해 마무리한다.',
 ].join(' ');
@@ -267,13 +268,20 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
       (priority === 'housing' && p.id === 'cheongan') ||
       (priority === 'tax_deduction' && p.id === 'sodeuk') ||
       (priority === 'tax_free' && p.id === 'doyak') ? -2 : 0;
+    const isJbFinancial = isJbFinancialProduct(p);
+    const jbBoost = isJbFinancial ? -10 : 0;
     return {
       ...p,
       eligible,
       reasons,
-      roadmapRank: eligible ? Math.max(1, p.rank + priorityBoost) : 99,
+      isJbFinancial,
+      roadmapRank: eligible ? Math.max(1, p.rank + priorityBoost + jbBoost) : 99,
     };
-  }).sort((a, b) => a.roadmapRank - b.roadmapRank);
+  }).sort((a, b) => {
+    if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+    if (a.isJbFinancial !== b.isJbFinancial) return a.isJbFinancial ? -1 : 1;
+    return a.roadmapRank - b.roadmapRank;
+  });
 
   const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
   const simulation = simulate(monthly, sim);
@@ -320,6 +328,17 @@ function coachProductContext({ productId = 'doyak', concept, userQuestion = '', 
     summary: `${product.name}을 이해하려면 먼저 "${title}"만 잡으면 돼요. ${explanation}`,
     nextChips: ['그럼 얼마 넣을까?', '다른 상품이랑 비교해줘', '가입 순서 알려줘'],
   };
+}
+
+function isJbFinancialProduct(product = {}) {
+  const text = [
+    product.id,
+    product.name,
+    product.provider,
+    product.issuer,
+    ...(Array.isArray(product.tags) ? product.tags : []),
+  ].filter(Boolean).join(' ');
+  return /(JB|전북은행|광주은행|JB금융|전북|광주)/i.test(text);
 }
 
 function selectJaybisToolCall(text, context = {}) {

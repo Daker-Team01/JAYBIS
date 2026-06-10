@@ -1,7 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useVoiceAgent } from './voiceAgent';
-import { runPensionAgent, resetPensionAgent } from './pensionAgent';
 import { analyzeRetirementIncome } from './pensionAnalysis';
+
+function extractAmount(text, keyword) {
+  const compact = String(text || '').replace(/,/g, '');
+  const around = compact.match(new RegExp(`${keyword}[^0-9]*(\\d+(?:\\.\\d+)?)(천만원|만원|원)?`));
+  if (!around) return 0;
+  const value = Number(around[1]);
+  const unit = around[2] || '만원';
+  if (unit === '천만원') return value * 10000000;
+  if (unit === '만원') return value * 10000;
+  return value;
+}
+
+function runPensionAgent(text) {
+  const monthlyPension = extractAmount(text, '연금');
+  const monthlyExpense = extractAmount(text, '생활비');
+  const assets = extractAmount(text, '자산');
+  const ageMatch = String(text || '').match(/(\d{2})\s*세|나이[^0-9]*(\d{2})/);
+  const age = Number(ageMatch?.[1] || ageMatch?.[2] || 0);
+  const result = analyzeRetirementIncome({ monthlyPension, monthlyExpense, assets, age });
+  return Promise.resolve({
+    message: [
+      result.summary,
+      `월 여유/부족액은 ${Number(result.expenseComparison.gap || 0).toLocaleString('ko-KR')}원입니다.`,
+      result.recommendation,
+    ].join('\n'),
+  });
+}
 
 export default function Senior({ seniorMode, setSeniorMode }) {
   const [settings] = window.useAppSettings();
@@ -219,7 +245,7 @@ export default function Senior({ seniorMode, setSeniorMode }) {
           <div className="between" style={{ marginBottom: 10 }}>
             <b style={{ fontSize: 15.5 }}>대화 기록</b>
             <button
-              onClick={() => { setMessages([]); resetPensionAgent(); }}
+              onClick={() => { setMessages([]); }}
               className="pill"
               style={{ fontSize: 11.5, background: 'var(--bg)', border: '1px solid var(--line)', cursor: 'pointer' }}
             >
