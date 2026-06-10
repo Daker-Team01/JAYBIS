@@ -190,7 +190,7 @@ function PensionView({ onBack, onGoGuide, speak, messages, setMessages, diagnosi
             ].map(({ label, val, set, ph }) => (
               <label key={label} style={{ display: 'grid', gap: 4 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 800 }}>{label}</span>
-                <input type="number" value={val} onChange={e => set(e.target.value)} placeholder={`예: ${ph}`} style={{ padding: 10, borderRadius: 10, border: '1px solid var(--line)', fontSize: 14 }} />
+                <input type="number" value={val} onChange={e => set(e.target.value)} placeholder={`예: ${ph}`} style={{ padding: 10, borderRadius: 10, border: '1px solid var(--line)', fontSize: 14, width: '100%', boxSizing: 'border-box' }} />
               </label>
             ))}
           </div>
