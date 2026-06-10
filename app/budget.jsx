@@ -5,32 +5,22 @@
 const {
   useState, useEffect, TopBar, SectionLabel, Icon, Bar, stagger,
   USER, BUDGET, useJaybisRuntimeData,
-  refreshSupabaseTransactions, refreshSupabaseBudgetInsights, applyBudgetInsight, won, manwon, pct,
+  refreshSupabaseTransactions, refreshSupabaseBudgetInsights, won, pct,
 } = window;
 
 function Budget({ nav, toast }) {
   const [snapshot] = useJaybisRuntimeData();
   const b = snapshot?.budget || BUDGET;
   const user = snapshot?.user || USER;
+  const report = b.spendingReport;
   const [tab, setTab] = useState('all'); // all | need | want | save
-  const [syncState, setSyncState] = useState('idle');
   const cats = tab === 'all' ? b.categories : b.categories.filter(c => c.bucket === tab);
-  const hasConnectedData = Boolean((snapshot?.transactions || []).length || b.salary);
 
   useEffect(() => {
-    let alive = true;
-    setSyncState('loading');
     refreshSupabaseTransactions()
       .then(() => refreshSupabaseBudgetInsights())
-      .then(() => { if (alive) setSyncState('done'); })
-      .catch(() => { if (alive) setSyncState('error'); });
-    return () => { alive = false; };
+      .catch(() => {});
   }, []);
-
-  const applyInsight = (insight) => {
-    applyBudgetInsight(insight);
-    toast(`${insight.categoryLabel || insight.title} 한도를 반영했어요`);
-  };
 
   return (
     <div className="scroll screen-anim">
@@ -39,86 +29,55 @@ function Budget({ nav, toast }) {
       } />
 
       <div style={{ padding:'2px 18px 26px' }} className="stagger">
-        <div className="between" style={{ marginBottom:12, ...stagger(0) }}>
-          <div>
-            <div style={{ fontSize:15, fontWeight:800, color:'var(--ink)' }}>소비 데이터</div>
-            <div className="muted" style={{ fontSize:12, marginTop:2 }}>
-              Supabase 거래내역을 기준으로 자동 분석합니다
-            </div>
-          </div>
-          <span className={'pill ' + (hasConnectedData ? 'pill-pos' : 'pill-warn')} style={{ fontSize:10.5 }}>
-            {syncState === 'loading' ? '동기화 중' : hasConnectedData ? '연결됨' : '데이터 없음'}
-          </span>
-        </div>
-
-        {/* ---- 50/30/20 요약 ---- */}
-        <div className="card" style={{ ...stagger(1), background:'var(--teal-900)', color:'#fff' }}>
-          <div className="between">
-            <div>
-              <div style={{ fontSize:12.5, color:'rgba(255,255,255,.7)', fontWeight:600 }}>세후 월급</div>
-              <div className="tnum" style={{ fontSize:26, fontWeight:800, marginTop:3 }}>{won(b.salary)}</div>
-            </div>
-            <span className="pill pill-ghost" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)' }}>
-              <Icon name="sparkF" size={13} color="var(--teal-300)" /> 50·30·20 룰
-            </span>
-          </div>
-
-          {/* 분배 막대 */}
-          <div style={{ display:'flex', height:16, borderRadius:8, overflow:'hidden', gap:3, marginTop:18 }}>
-            {b.buckets.map((bk,i) => (
-              <div key={i} style={{ flex:bk.ratio, background:bk.tone, position:'relative' }} />
-            ))}
-          </div>
-          <div className="row" style={{ gap:8, marginTop:14 }}>
-            {b.buckets.map((bk,i) => {
-              const over = bk.used > bk.plan;
-              return (
-                <div key={i} style={{ flex:1, background:'rgba(255,255,255,.1)', borderRadius:12, padding:'10px 11px' }}>
-                  <div className="row" style={{ gap:6 }}>
-                    <span style={{ width:8, height:8, borderRadius:3, background:bk.tone }} />
-                    <span style={{ fontSize:11.5, fontWeight:700 }}>{bk.label} {bk.ratio}%</span>
-                  </div>
-                  <div className="tnum" style={{ fontSize:13.5, fontWeight:800, marginTop:7 }}>{manwon(bk.used)}</div>
-                  <div style={{ fontSize:10.5, color: over ? '#fca5a5' : 'rgba(255,255,255,.6)', fontWeight:600, marginTop:1 }}>
-                    / {manwon(bk.plan)} {over ? '초과' : '여유'}
+        {/* ---- 소비진단 리포트 ---- */}
+        {report && (
+          <div style={{ ...stagger(0) }}>
+            <SectionLabel>소비진단 리포트</SectionLabel>
+            <div className="card" style={{ padding:'15px 16px' }}>
+              <div className="between" style={{ marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:14.5, fontWeight:800, color:'var(--ink)' }}>이번 달 소비 요약</div>
+                  <div className="muted" style={{ fontSize:12, marginTop:2 }}>
+                    {report.summary}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ---- AI 경고 ---- */}
-        <div style={{ marginTop:20, ...stagger(2) }}>
-          <SectionLabel>제이비스가 찾은 절약 포인트</SectionLabel>
-          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {b.alerts.length ? b.alerts.map((al,i) => (
-              <div key={i} className="card" style={{ borderLeft:'3px solid var(--warn)', padding:'14px 16px' }}>
-                <div className="between" style={{ marginBottom:6 }}>
-                  <div className="row" style={{ gap:8 }}>
-                    <Icon name="warn" size={17} color="var(--warn)" />
-                    <b style={{ fontSize:14, fontWeight:700, color:'var(--ink)' }}>{al.title}</b>
-                  </div>
-                  <span className="pill pill-pos" style={{ fontSize:11 }}>월 {won(al.save).replace('₩','')}원↓</span>
-                </div>
-                <p className="muted" style={{ fontSize:13, lineHeight:1.55 }}>{al.body}</p>
-                <button onClick={() => applyInsight(al)} className="btn btn-ghost"
-                  style={{ height:40, fontSize:13, marginTop:11, width:'auto', padding:'0 16px', display:'inline-flex' }}>
-                  {al.actionLabel || '한도 적용하기'}
-                </button>
+                <span className={'pill ' + (report.status === '주의' ? 'pill-neg' : report.status === '관찰' ? 'pill-warn' : 'pill-pos')} style={{ fontSize:10.5 }}>
+                  {report.status}
+                </span>
               </div>
-            )) : (
-              <div className="card" style={{ padding:'14px 16px' }}>
-                <p className="muted" style={{ fontSize:13, lineHeight:1.55 }}>
-                  제이비스 소비 진단 결과가 저장되면 이 영역에 절약 포인트를 표시합니다.
+
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                {(report.metrics || []).slice(0, 4).map((metric, i) => (
+                  <div key={i} style={{ border:'1px solid var(--line)', borderRadius:12, padding:'9px 10px', background:'var(--bg)' }}>
+                    <div className="muted" style={{ fontSize:11, fontWeight:700 }}>{metric.label}</div>
+                    <div className="tnum" style={{ fontSize:13.5, fontWeight:800, color:'var(--ink)', marginTop:3 }}>{metric.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {!!(report.topCategories || []).length && (
+                <div style={{ marginTop:12, display:'flex', flexDirection:'column', gap:7 }}>
+                  {(report.topCategories || []).slice(0, 3).map((category, i) => (
+                    <div key={i} className="between" style={{ gap:10 }}>
+                      <span style={{ fontSize:12.5, fontWeight:700, color:'var(--slate-600)' }}>{category.label}</span>
+                      <span className="tnum" style={{ fontSize:12.5, fontWeight:800, color:'var(--ink)' }}>
+                        {won(category.amount)} · {pct(category.ratio || 0, 1)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {report.savingBasis && (
+                <p className="muted" style={{ fontSize:11.8, lineHeight:1.5, marginTop:11 }}>
+                  {report.savingBasis}
                 </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* ---- 또래 비교 ---- */}
-        <div style={{ marginTop:22, ...stagger(3) }}>
+        <div style={{ marginTop: report ? 22 : 0, ...stagger(report ? 1 : 0) }}>
           <SectionLabel>{user.age ? `${user.age}세 또래 지출 비중과 비교` : '또래 지출 비중과 비교'}</SectionLabel>
           <div className="card">
             {b.peers.length ? b.peers.map((p,i) => {
@@ -162,8 +121,29 @@ function Budget({ nav, toast }) {
           </div>
         </div>
 
+        {/* ---- AI 경고 ---- */}
+        {!!b.alerts.length && (
+          <div style={{ marginTop:22, ...stagger(report ? 2 : 1) }}>
+            <SectionLabel>제이비스가 찾은 절약 포인트</SectionLabel>
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {b.alerts.map((al,i) => (
+              <div key={i} className="card" style={{ borderLeft:'3px solid var(--warn)', padding:'14px 16px' }}>
+                <div className="between" style={{ marginBottom:6 }}>
+                  <div className="row" style={{ gap:8 }}>
+                    <Icon name="warn" size={17} color="var(--warn)" />
+                    <b style={{ fontSize:14, fontWeight:700, color:'var(--ink)' }}>{al.title}</b>
+                  </div>
+                  <span className="pill pill-pos" style={{ fontSize:11 }}>월 {won(al.save).replace('₩','')}원↓</span>
+                </div>
+                <p className="muted" style={{ fontSize:13, lineHeight:1.55 }}>{al.body}</p>
+              </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ---- 카테고리별 지출 ---- */}
-        <div style={{ marginTop:22, ...stagger(4) }}>
+        <div style={{ marginTop:22, ...stagger(report ? (b.alerts.length ? 3 : 2) : (b.alerts.length ? 2 : 1)) }}>
           <SectionLabel>카테고리별 지출</SectionLabel>
           <div className="seg" style={{ marginBottom:13 }}>
             {[['all','전체'],['need','필수'],['want','여유'],['save','저축']].map(([k,l]) => (
@@ -206,7 +186,7 @@ function Budget({ nav, toast }) {
         </div>
 
         {/* ---- 다음 달 보정 제안 ---- */}
-        <div className="card" style={{ marginTop:16, ...stagger(5), background:'var(--teal-50)', border:'1px solid var(--teal-100)' }}>
+        <div className="card" style={{ marginTop:16, ...stagger(report ? (b.alerts.length ? 4 : 3) : (b.alerts.length ? 3 : 2)), background:'var(--teal-50)', border:'1px solid var(--teal-100)' }}>
           <div className="row" style={{ gap:8, marginBottom:7 }}>
             <Icon name="refresh" size={17} color="var(--teal-700)" />
             <b style={{ fontSize:13.5, fontWeight:800, color:'var(--teal-800)' }}>다음 달 예산 보정 제안</b>
