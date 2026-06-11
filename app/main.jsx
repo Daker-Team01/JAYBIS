@@ -5,6 +5,7 @@
 const {
   ReactDOM, useState, useEffect, useToast, useAppSettings, StatusBar, Onboarding,
   Home, Jaybis, Budget, Products, Profile, Icon,
+  FraudAlertOverlay,
   loadOnboardingState, saveOnboardingState,
 } = window;
 
@@ -21,6 +22,17 @@ function App() {
   useEffect(() => {
     setSeniorMode(Boolean(settings?.seniorMode));
   }, [settings?.seniorMode]);
+
+  useEffect(() => {
+    const onNav = (e) => {
+      const target = e.detail?.tab;
+      if (!target) return;
+      if (target === 'jaybis') { setJaybisSeed(null); setTab('jaybis'); return; }
+      setTab(target);
+    };
+    window.addEventListener('jaybis-navigate', onNav);
+    return () => window.removeEventListener('jaybis-navigate', onNav);
+  }, []);
 
   const nav = (target, seed) => {
     if (target === 'chat') { setJaybisSeed(seed || null); setTab('jaybis'); return; }
@@ -60,6 +72,8 @@ function App() {
       {tab === 'profile'  && <Profile  nav={nav} toast={toast} />}
 
       {toastNode}
+
+      <FraudAlertOverlay />
 
       <TabBar tab={tab} setTab={setTab} onChat={() => { setJaybisSeed(null); setTab('jaybis'); }} />
 

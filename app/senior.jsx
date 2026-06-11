@@ -447,9 +447,51 @@ function GuideView({ onBack, pensionDiagnosis, speak, isSpeaking }) {
   );
 }
 
+// ─── 최근 거래 카드 ───────────────────────────────────────────────────────────
+function RecentTransactionsCard({ transactions }) {
+  const recent = transactions.slice(0, 5);
+  if (!recent.length) return null;
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--slate-400)', marginBottom: 10, letterSpacing: '.3px' }}>최근 거래</div>
+      <div className="card" style={{ padding: '4px 0' }}>
+        {recent.map((tx, i) => {
+          const isFraud = tx.fraudStatus === 'suspicious';
+          return (
+            <div
+              key={tx.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '12px 16px',
+                borderTop: i ? '1px solid var(--line)' : 'none',
+                background: isFraud ? '#fff8f8' : 'transparent',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700, color: isFraud ? '#dc2626' : 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {isFraud ? '⚠️ ' : ''}{tx.merchantName || tx.name}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--slate-400)', marginTop: 2 }}>
+                  {tx.date}{tx.transactionTime ? ' ' + tx.transactionTime.slice(0, 5) : ''}
+                  {tx.merchantCity ? ' · ' + tx.merchantCity : ''}
+                </div>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 15, color: isFraud ? '#dc2626' : 'var(--ink)', flexShrink: 0 }}>
+                {tx.amount < 0 ? '-' : '+'}₩{Math.abs(tx.amount).toLocaleString('ko-KR')}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── 시니어 메인 화면 ────────────────────────────────────────────────────────
 export default function Senior({ seniorMode, setSeniorMode }) {
   const [settings] = window.useAppSettings();
+  const [snapshot] = window.useJaybisRuntimeData();
   // 화면 스택: 'main' | 'pension' | 'guide'
   const [view, setView] = useState('main');
   const { isSpeaking, speak } = useTTS(settings?.voiceGuide);
@@ -626,6 +668,8 @@ export default function Senior({ seniorMode, setSeniorMode }) {
 
           </div>
         </div>
+
+        <RecentTransactionsCard transactions={snapshot?.transactions || []} />
       </div>
     </div>
   );
