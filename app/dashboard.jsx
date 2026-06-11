@@ -1208,8 +1208,6 @@ const HOME_FEATURES = [
   { ic:'budget', title:'예산 설계', desc:'수입 기준 예산과 지출을 확인해요', go:'budget', tone:'#0047bb' },
   { ic:'products', title:'금융상품', desc:'가입 가능한 상품과 조건을 봐요', go:'products', tone:'#0d2d77' },
   { ic:'piggy', title:'납입 시뮬레이터', desc:'월 납입액별 예상 결과를 계산해요', go:'products', tone:'#2f6bdb' },
-  { ic:'chat', title:'AI 금융상담', desc:'대화로 진단과 코칭을 이어가요', go:'chat', tone:'#0047bb' },
-  { ic:'shield', title:'보이스피싱 보호', desc:'보호 설정과 감시 상태를 확인해요', go:'profile', tone:'#0d2d77' },
   { ic:'eye', title:'접근성 설정', desc:'시니어 모드와 음성 안내를 조정해요', go:'profile', tone:'#64748b' },
 ];
 
