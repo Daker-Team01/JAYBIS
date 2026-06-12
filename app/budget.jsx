@@ -15,6 +15,13 @@ function Budget({ nav, toast }) {
   const report = b.spendingReport;
   const [tab, setTab] = useState('all'); // all | need | want | save
   const cats = tab === 'all' ? b.categories : b.categories.filter(c => c.bucket === tab);
+  const currentAge = Number(user.age || report?.assetGoal?.currentAge || 0);
+  const monthlyAvailable = Number(report?.assetGoal?.monthlyAvailable || snapshot?.assets?.cashflow?.left || 0);
+  const targetAge = Math.max(currentAge || 0, Number(report?.assetGoal?.targetAge || (user.age ? user.age + 3 : 30)));
+  const targetAmount = Math.max(0, Number(report?.assetGoal?.targetAmount || 10000000));
+  const monthsToGoal = Math.max(1, Math.round((targetAge - currentAge) * 12));
+  const monthlyRequired = Math.ceil((targetAmount / monthsToGoal) / 10000) * 10000;
+  const monthlyGap = Math.max(0, monthlyRequired - monthlyAvailable);
 
   useEffect(() => {
     refreshSupabaseTransactions()
@@ -32,7 +39,7 @@ function Budget({ nav, toast }) {
         {/* ---- 소비진단 리포트 ---- */}
         {report && (
           <div style={{ ...stagger(0) }}>
-            <SectionLabel>소비진단 리포트</SectionLabel>
+            <SectionLabel>{user.name || '사용자'}님의 리포트</SectionLabel>
             <div className="card" style={{ padding:'15px 16px' }}>
               <div className="between" style={{ marginBottom:10 }}>
                 <div>
@@ -53,6 +60,41 @@ function Budget({ nav, toast }) {
                     <div className="tnum" style={{ fontSize:13.5, fontWeight:800, color:'var(--ink)', marginTop:3 }}>{metric.value}</div>
                   </div>
                 ))}
+              </div>
+
+              <div style={{ marginTop:14, padding:'13px 13px', borderRadius:13, background:'var(--teal-50)', border:'1px solid var(--teal-100)' }}>
+                <div className="between" style={{ marginBottom:10, gap:10 }}>
+                  <div>
+                    <div style={{ fontSize:13.5, fontWeight:800, color:'var(--teal-800)' }}>내 자산 모으기</div>
+                    <div style={{ fontSize:11.5, color:'var(--teal-700)', marginTop:2 }}>현재 소비 상태 기준으로 월 필요 저축액을 계산해요</div>
+                  </div>
+                  <Icon name="piggy" size={20} color="var(--teal-700)" />
+                </div>
+
+                <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)', gap:8 }}>
+                  <GoalValue label="몇 살까지" value={`${targetAge}세`} />
+                  <GoalValue label="목표 금액" value={won(targetAmount)} />
+                </div>
+
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
+                  <GoalMetric label="월 필요액" value={won(monthlyRequired)} />
+                  <GoalMetric label="현재 여유" value={won(monthlyAvailable)} />
+                </div>
+                <div style={{ marginTop:9, padding:'9px 10px', borderRadius:11, background:'#fff', border:'1px solid var(--teal-100)' }}>
+                  <div className="between" style={{ gap:10 }}>
+                    <span style={{ fontSize:12.5, fontWeight:800, color:'var(--ink)' }}>
+                      {monthlyGap > 0 ? '월 부족액' :'JAYBIS의 코멘트'}
+                    </span>
+                    <span className="tnum" style={{ fontSize:13.5, fontWeight:900, color: monthlyGap > 0 ? 'var(--neg)' : 'var(--pos)' }}>
+                      {monthlyGap > 0 ? won(monthlyGap) : '가능'}
+                    </span>
+                  </div>
+                  <p className="muted" style={{ fontSize:11.5, lineHeight:1.45, marginTop:5 }}>
+                    {currentAge
+                      ? `${targetAge}세까지 ${won(targetAmount)}을 모으려면 앞으로 약 ${monthsToGoal}개월 동안 월 ${won(monthlyRequired)}이 필요해요.`
+                      : `목표 기간을 기준으로 월 ${won(monthlyRequired)}이 필요해요.`}
+                  </p>
+                </div>
               </div>
 
               {!!(report.topCategories || []).length && (
@@ -197,6 +239,28 @@ function Budget({ nav, toast }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function GoalValue({ label, value }) {
+  return (
+    <label style={{ display:'grid', gap:5 }}>
+      <span style={{ fontSize:11.5, fontWeight:800, color:'var(--teal-800)' }}>{label}</span>
+      <div style={{ minHeight:36, border:'1px solid var(--teal-100)', borderRadius:10, background:'#fff', padding:'8px 9px' }}>
+        <div className="tnum" style={{ fontSize:12.5, lineHeight:1.25, fontWeight:900, color:'var(--ink)', overflowWrap:'anywhere' }}>
+          {value}
+        </div>
+      </div>
+    </label>
+  );
+}
+
+function GoalMetric({ label, value }) {
+  return (
+    <div style={{ padding:'9px 10px', borderRadius:11, background:'#fff', border:'1px solid var(--teal-100)' }}>
+      <div className="muted" style={{ fontSize:11, fontWeight:800 }}>{label}</div>
+      <div className="tnum" style={{ fontSize:13.5, fontWeight:900, color:'var(--teal-800)', marginTop:3 }}>{value}</div>
     </div>
   );
 }

@@ -338,6 +338,14 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     const currentBudget = snapshot.raw.budget || snapshot.budget || {};
     const salary = Number(diagnosis.salary || currentBudget.salary || 0);
     const spend = Number(diagnosis.spend || 0);
+    const user = snapshot.user || USER;
+    const currentAge = Number(user.age || 0);
+    const monthlyAvailable = Math.max(0, Number(snapshot.assets?.cashflow?.left ?? salary - spend));
+    const defaultTargetAge = currentAge ? currentAge + 3 : 30;
+    const defaultTargetAmount = 10000000;
+    const monthsToGoal = Math.max(1, Math.round((defaultTargetAge - currentAge) * 12));
+    const monthlyRequired = Math.ceil(defaultTargetAmount / monthsToGoal / 10000) * 10000;
+    const monthlyGap = Math.max(0, monthlyRequired - monthlyAvailable);
     const spendRate = salary ? spend / salary * 100 : Number(diagnosis.spendRate || 0);
     const categories = Array.isArray(currentBudget.categories) ? currentBudget.categories : [];
     const topCategories = categories.length
@@ -404,6 +412,14 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         { label: '변동비', value: won(diagnosis.variable || 0) },
       ],
       topCategories,
+      assetGoal: {
+        targetAge: defaultTargetAge,
+        targetAmount: defaultTargetAmount,
+        currentAge,
+        monthlyAvailable,
+        monthlyRequired,
+        monthlyGap,
+      },
       savingBasis: '절약 포인트는 비상금·주거비 같은 고정/필수 지출을 제외하고 유동비 안에서만 골랐습니다.',
     };
 
@@ -466,6 +482,52 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     icon: 'chart',
   };
 
+  const applyAssetGoalUpdate = (data = {}) => {
+    const snapshot = getRuntimeSnapshot();
+    const currentBudget = snapshot.raw.budget || snapshot.budget || {};
+    const previousReport = currentBudget.spendingReport || snapshot.budget?.spendingReport;
+    if (!previousReport) {
+      emitAi('아직 소비진단 리포트가 없어서 자산 목표를 저장할 위치가 없어요. 먼저 “소비진단 해줘”를 실행한 뒤 목표를 수정해 주세요.');
+      setPendingAction(null);
+      return false;
+    }
+
+    const previousGoal = previousReport.assetGoal || {};
+    const currentAge = Number(snapshot.user?.age || previousGoal.currentAge || 0);
+    const targetAge = Math.max(currentAge || 0, Number(data.targetAge || previousGoal.targetAge || (currentAge ? currentAge + 3 : 30)));
+    const targetAmount = Math.max(0, Number(data.targetAmount || previousGoal.targetAmount || 10000000));
+    const monthlyAvailable = Math.max(0, Number(previousGoal.monthlyAvailable || snapshot.assets?.cashflow?.left || 0));
+    const monthsToGoal = Math.max(1, Math.round((targetAge - currentAge) * 12));
+    const monthlyRequired = Math.ceil(targetAmount / monthsToGoal / 10000) * 10000;
+    const monthlyGap = Math.max(0, monthlyRequired - monthlyAvailable);
+    const nextGoal = {
+      ...previousGoal,
+      targetAge,
+      targetAmount,
+      currentAge,
+      monthlyAvailable,
+      monthlyRequired,
+      monthlyGap,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'jaybis_chat',
+    };
+
+    saveRuntimeData({
+      ...snapshot.raw,
+      budget: {
+        ...currentBudget,
+        spendingReport: {
+          ...previousReport,
+          assetGoal: nextGoal,
+        },
+      },
+    });
+    toast('자산 목표를 수정했어요');
+    emitAi(`좋아요. **내 자산 모으기 목표**를 ${targetAge}세까지 ${won(targetAmount)} 모으기로 바꿨어요.\n\n현재 기준 월 필요 저축액은 **${won(monthlyRequired)}**입니다.`);
+    setPendingAction(null);
+    return true;
+  };
+
   const runConfirmedAction = (action) => {
     if (!action) return false;
     if (action.type === 'toggleSeniorMode') {
@@ -488,6 +550,10 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       emitAi(applyBudgetPlan(action.data));
       setCards(buildFeatureCards('budgetPlanResult', action.data, nav));
       setPendingAction(null);
+      return true;
+    }
+    if (action.type === 'updateAssetGoal') {
+      applyAssetGoalUpdate(action.data);
       return true;
     }
     if (action.type === 'openBudgetDesigner') {
@@ -521,8 +587,68 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     return false;
   };
 
+  const parseKoreanMoney = (text) => {
+    const source = String(text || '').replace(/,/g, '').replace(/\s+/g, '');
+    const unitPattern = /(\d+(?:\.\d+)?)(억|천만|백만|십만|만원|만|원)/g;
+    let match;
+    let best = 0;
+    while ((match = unitPattern.exec(source))) {
+      const value = Number(match[1]);
+      const unit = match[2];
+      if (!Number.isFinite(value)) continue;
+      const amount = unit === '억'
+        ? value * 100000000
+        : unit === '천만'
+          ? value * 10000000
+          : unit === '백만'
+            ? value * 1000000
+            : unit === '십만'
+              ? value * 100000
+              : unit === '만원' || unit === '만'
+                ? value * 10000
+                : value;
+      best = Math.max(best, Math.round(amount));
+    }
+    if (best) return best;
+    const rawNumber = source.match(/(?:목표금액|목표금|금액|목표|모으기|모으기로)?(\d{7,})/);
+    return rawNumber ? Number(rawNumber[1]) : 0;
+  };
+
+  const parseAssetGoalRequest = (text) => {
+    const compact = text.replace(/\s/g, '');
+    const hasGoalContext = /(자산모으|내자산|목표금액|목표금|몇살까지|살까지|세까지|모으기목표|저축목표|모으기로|모을래|모으고싶)/.test(compact);
+    const wantsChange = /(바꿔|수정|변경|설정|잡아|해줘|할래|하고싶|모으)/.test(compact);
+    if (!hasGoalContext || !wantsChange) return null;
+
+    const ageMatch = compact.match(/(\d{1,2})(?:세|살)까지/) || compact.match(/(?:목표나이|나이)(\d{1,2})(?:세|살)?/);
+    const targetAge = ageMatch ? Number(ageMatch[1]) : 0;
+    const targetAmount = parseKoreanMoney(text);
+    if (!targetAge && !targetAmount) return null;
+
+    const snapshot = getRuntimeSnapshot();
+    const currentGoal = snapshot.budget?.spendingReport?.assetGoal || {};
+    const currentAge = Number(snapshot.user?.age || currentGoal.currentAge || 0);
+    const nextAge = targetAge || Number(currentGoal.targetAge || (currentAge ? currentAge + 3 : 30));
+    const nextAmount = targetAmount || Number(currentGoal.targetAmount || 10000000);
+    if (currentAge && nextAge < currentAge) return null;
+
+    return {
+      id: `asset-goal-${Date.now()}`,
+      type: 'updateAssetGoal',
+      data: {
+        targetAge: nextAge,
+        targetAmount: nextAmount,
+      },
+      confirmText: `내 자산 모으기 목표를 ${nextAge}세까지 ${won(nextAmount)} 모으기로 수정할게요.`,
+      yesLabel: '수정',
+      noLabel: '취소',
+    };
+  };
+
   const parseActionRequest = (text) => {
     const t = text.replace(/\s/g, '');
+    const assetGoalAction = parseAssetGoalRequest(text);
+    if (assetGoalAction) return assetGoalAction;
     const wantsSeniorMode = /(시니어|senior|큰글씨|큰글자|쉬운설명|고령|어르신)/i.test(t);
     const wantsVoice = /(tts|음성|읽어|소리)/i.test(t);
     if (wantsSeniorMode && /(꺼|끄|off|해제|기본|일반)/i.test(t)) {

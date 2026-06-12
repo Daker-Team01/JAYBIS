@@ -12,10 +12,15 @@ function Products({ nav, toast }) {
   const [snapshot] = useJaybisRuntimeData();
   const products = snapshot.products?.length ? snapshot.products : PRODUCTS;
   const sim = snapshot.sim || SIM;
-  const [monthly, setMonthly] = useState(sim.defaultMonthly);
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const selectedProduct = products.find((product) => product.id === selectedProductId) || products[0] || null;
+  const simOption = buildProductSimulationOption(selectedProduct, sim);
+  const [monthly, setMonthly] = useState(simOption.defaultMonthly);
+  const [termYears, setTermYears] = useState(simOption.defaultYears);
+  const [productOpen, setProductOpen] = useState(false);
   const [loadState, setLoadState] = useState('idle');
   const [loadError, setLoadError] = useState('');
-  const r = simulate(monthly, sim);
+  const r = simulateProductPlan({ product: selectedProduct, monthly, years: termYears, fallbackSim: sim });
   const hasProducts = products.length > 0;
 
   const getApplyUrl = (product) => {
@@ -54,6 +59,17 @@ function Products({ nav, toast }) {
       });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    if (!selectedProductId && products[0]?.id) {
+      setSelectedProductId(products[0].id);
+    }
+  }, [products, selectedProductId]);
+
+  useEffect(() => {
+    setMonthly((current) => clampMonthly(current || simOption.defaultMonthly, simOption));
+    setTermYears((current) => simOption.yearOptions.includes(current) ? current : simOption.defaultYears);
+  }, [selectedProduct?.id]);
 
   return (
     <div className="scroll screen-anim">
@@ -111,38 +127,93 @@ function Products({ nav, toast }) {
               <div className="between">
                 <div className="row" style={{ gap:7 }}>
                   <Icon name="piggy" size={18} color="var(--teal-300)" />
-                  <b style={{ fontSize:13.5, fontWeight:700 }}>{sim.productName}</b>
+                  <b style={{ fontSize:13.5, fontWeight:700 }}>{selectedProduct?.name || sim.productName}</b>
                 </div>
                 <span className="pill" style={{ background:'rgba(94,234,212,.18)', color:'var(--teal-300)', fontSize:10.5 }}>
-                  {sim.termMonths}개월 {sim.taxFreeNote ? `· ${sim.taxFreeNote}` : ''}
+                  {termYears}년 {r.taxSaved ? '· 절세 반영' : ''}
                 </span>
               </div>
               <div style={{ textAlign:'center', marginTop:16 }}>
-                <div style={{ fontSize:12, color:'rgba(255,255,255,.7)', fontWeight:600 }}>5년 뒤 예상 수령액</div>
+                <div style={{ fontSize:12, color:'rgba(255,255,255,.7)', fontWeight:600 }}>{termYears}년 뒤 예상 수령액</div>
                 <div className="tnum" style={{ fontSize:34, fontWeight:800, letterSpacing:'-1px', marginTop:4 }}>{won(r.total)}</div>
                 <div className="row" style={{ justifyContent:'center', gap:6, marginTop:8 }}>
                   <span className="pill" style={{ background:'rgba(255,255,255,.14)', color:'#fff', fontSize:10.5 }}>+ 정부기여 {won(r.govMatch)}</span>
                   <span className="pill" style={{ background:'rgba(255,255,255,.14)', color:'#fff', fontSize:10.5 }}>+ 이자 {won(r.interest)}</span>
+                  <span className="pill" style={{ background:'rgba(255,255,255,.14)', color:'#fff', fontSize:10.5 }}>+ 절세 {won(r.taxSaved)}</span>
                 </div>
               </div>
             </div>
 
             <div style={{ padding:'18px 18px 20px' }}>
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:13.5, fontWeight:700, color:'var(--ink)', marginBottom:8 }}>상품 선택</div>
+                <button
+                  onClick={() => setProductOpen((open) => !open)}
+                  style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'11px 12px', borderRadius:12, border:'1.5px solid var(--teal-600)', background:'var(--teal-50)', textAlign:'left' }}
+                >
+                  <span style={{ minWidth:0 }}>
+                    <span style={{ display:'block', fontSize:13.5, fontWeight:800, color:'var(--ink)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedProduct?.name || '상품을 선택하세요'}</span>
+                    <span className="muted" style={{ display:'block', fontSize:11.5, marginTop:1 }}>{selectedProduct?.rateLabel || selectedProduct?.rate || selectedProduct?.benefit || '상품 조건 기반 계산'}</span>
+                  </span>
+                  <Icon name="chevR" size={17} color="var(--teal-600)" style={{ transform: productOpen ? 'rotate(90deg)' : 'none', transition:'transform .18s ease' }} />
+                </button>
+                {productOpen && (
+                  <div style={{ display:'grid', gap:7, marginTop:8, maxHeight:250, overflowY:'auto', paddingRight:2 }}>
+                    {products.map((product) => {
+                      const selected = selectedProduct?.id === product.id;
+                      return (
+                        <button
+                          key={product.id}
+                          onClick={() => {
+                            setSelectedProductId(product.id);
+                            setProductOpen(false);
+                          }}
+                          style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'10px 11px', borderRadius:12, border:selected ? '1.5px solid var(--teal-600)' : '1px solid var(--line)', background:selected ? 'var(--teal-50)' : 'var(--bg)', textAlign:'left' }}
+                        >
+                          <span style={{ minWidth:0 }}>
+                            <span style={{ display:'block', fontSize:13, fontWeight:800, color:'var(--ink)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{product.name}</span>
+                            <span className="muted" style={{ display:'block', fontSize:11.5, marginTop:1 }}>{product.rateLabel || product.rate || product.benefit || '상품 조건 기반 계산'}</span>
+                          </span>
+                          {selected && <Icon name="check" size={16} color="var(--teal-600)" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {isYouthLeapProduct(selectedProduct) && (
+                  <p className="muted" style={{ fontSize:11.5, lineHeight:1.45, marginTop:7 }}>
+                    청년도약계좌는 상품 데이터에 별도 기여율이 없으면 월 최대 24,000원 기준의 정부기여금을 기본 반영합니다.
+                  </p>
+                )}
+              </div>
+
               <div className="between" style={{ marginBottom:13 }}>
                 <span style={{ fontSize:13.5, fontWeight:700, color:'var(--ink)' }}>월 납입액</span>
                 <span className="tnum" style={{ fontSize:18, fontWeight:800, color:'var(--teal-600)' }}>{won(monthly)}</span>
               </div>
-              <input type="range" className="sim" min={sim.minMonthly} max={sim.maxMonthly} step={sim.stepMonthly}
+              <input type="range" className="sim" min={simOption.minMonthly} max={simOption.maxMonthly} step={simOption.stepMonthly}
                 value={monthly} onChange={e => setMonthly(+e.target.value)} />
               <div className="between" style={{ marginTop:6 }}>
-                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(sim.minMonthly)}원</span>
-                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(sim.maxMonthly)}원</span>
+                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(simOption.minMonthly)}원</span>
+                <span className="muted tnum" style={{ fontSize:11 }}>{manwon(simOption.maxMonthly)}원</span>
+              </div>
+
+              <div style={{ marginTop:16 }}>
+                <div className="between" style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:13.5, fontWeight:700, color:'var(--ink)' }}>기간 선택</div>
+                  <span className="muted" style={{ fontSize:11.5 }}>{simOption.minYears}년~{simOption.maxYears}년</span>
+                </div>
+                <div className="seg">
+                  {simOption.yearOptions.map((year) => (
+                    <button key={year} className={termYears === year ? 'on' : ''} onClick={() => setTermYears(year)}>{year}년</button>
+                  ))}
+                </div>
               </div>
 
               <div className="divider" style={{ margin:'18px 0' }} />
 
               {[
-                { t:'5년 총 납입 원금', v:won(r.principal) },
+                { t:`${termYears}년 총 납입 원금`, v:won(r.principal) },
                 { t:'정부기여금', v:'+ '+won(r.govMatch), pos:true },
                 { t:'이자 수익', v:'+ '+won(r.interest), pos:true },
                 { t:'비과세 절세 효과', v:'+ '+won(r.taxSaved), pos:true },
@@ -153,7 +224,7 @@ function Products({ nav, toast }) {
                 </div>
               ))}
 
-              <button onClick={() => openApplyPage(products[0] || { name: sim.productName })} className="btn btn-primary" style={{ marginTop:16 }}>
+              <button onClick={() => openApplyPage(selectedProduct || { name: sim.productName })} className="btn btn-primary" style={{ marginTop:16 }}>
                 이 조건으로 가입하기
               </button>
             </div>
@@ -172,6 +243,86 @@ function Products({ nav, toast }) {
       </div>
     </div>
   );
+}
+
+function numberOr(value, fallback = 0) {
+  const next = Number(String(value ?? '').replace(/,/g, ''));
+  return Number.isFinite(next) && next > 0 ? next : fallback;
+}
+
+function rateFromProduct(product = {}, fallback = 0) {
+  const simulation = product.simulation || {};
+  const rawRate = numberOr(simulation.rateAnnual ?? simulation.rate_annual ?? product.rateAnnual ?? product.rate_annual ?? product.maxRate ?? product.max_rate ?? product.minRate ?? product.min_rate, fallback);
+  return rawRate > 1 ? rawRate / 100 : rawRate;
+}
+
+function buildProductSimulationOption(product, fallbackSim = SIM) {
+  const limits = product?.limits || {};
+  const simulation = product?.simulation || {};
+  const unit = 10000;
+  const rawMaxMonthly = numberOr(product?.maxMonthly ?? product?.max_monthly ?? limits.maxMonthly ?? limits.max_monthly, fallbackSim.maxMonthly || 1000000);
+  const rawMinMonthly = numberOr(product?.minMonthly ?? product?.min_monthly ?? limits.minMonthly ?? limits.min_monthly, fallbackSim.minMonthly || 0);
+  const minMonthly = Math.ceil(rawMinMonthly / unit) * unit;
+  const maxMonthly = Math.max(minMonthly, Math.floor(rawMaxMonthly / unit) * unit);
+  const stepMonthly = unit;
+  const rawDefaultMonthly = numberOr(simulation.defaultMonthly ?? simulation.default_monthly ?? fallbackSim.defaultMonthly, Math.min(maxMonthly, 300000));
+  const defaultMonthly = Math.min(maxMonthly, Math.max(minMonthly, Math.round(rawDefaultMonthly / unit) * unit));
+  const fallbackTermMonths = fallbackSim.termMonths || 60;
+  const defaultTermMonths = numberOr(product?.term ?? product?.termMonths ?? product?.term_months ?? limits.termMonths ?? limits.term_months ?? simulation.termMonths, fallbackTermMonths);
+  const minTermMonths = numberOr(product?.minTermMonths ?? product?.min_term_months ?? limits.minTermMonths ?? limits.min_term_months ?? simulation.minTermMonths ?? simulation.min_term_months, Math.min(defaultTermMonths, 12));
+  const maxTermMonths = numberOr(product?.maxTermMonths ?? product?.max_term_months ?? limits.maxTermMonths ?? limits.max_term_months ?? simulation.maxTermMonths ?? simulation.max_term_months, Math.max(defaultTermMonths, minTermMonths));
+  const minYears = Math.max(1, Math.ceil(minTermMonths / 12));
+  const maxYears = Math.max(minYears, Math.floor(maxTermMonths / 12));
+  const defaultYears = Math.min(maxYears, Math.max(minYears, Math.round(defaultTermMonths / 12)));
+  const baseOptions = [1, 2, 3, 5, 7, 10, defaultYears, minYears, maxYears]
+    .filter((year) => year >= minYears && year <= maxYears);
+  return {
+    minMonthly,
+    maxMonthly,
+    stepMonthly,
+    defaultMonthly,
+    defaultYears,
+    minYears,
+    maxYears,
+    yearOptions: Array.from(new Set(baseOptions)).sort((a, b) => a - b),
+  };
+}
+
+function clampMonthly(value, option) {
+  const raw = numberOr(value, option.defaultMonthly);
+  const stepped = Math.round(raw / option.stepMonthly) * option.stepMonthly;
+  return Math.min(option.maxMonthly, Math.max(option.minMonthly, stepped));
+}
+
+function simulateProductPlan({ product, monthly, years, fallbackSim = SIM }) {
+  const simulation = product?.simulation || {};
+  const option = buildProductSimulationOption(product, fallbackSim);
+  const monthCount = Math.max(1, Math.round(numberOr(years, option.defaultYears) * 12));
+  const monthlyAmount = clampMonthly(monthly, option);
+  const principal = monthlyAmount * monthCount;
+  const annualRate = rateFromProduct(product, fallbackSim.rateAnnual || 0);
+  const interest = principal * annualRate * (monthCount + 1) / (2 * 12);
+  const defaultGovRate = isYouthLeapProduct(product) ? 0.06 : fallbackSim.govMatchRate;
+  const govRate = numberOr(simulation.govMatchRate ?? simulation.gov_match_rate ?? product?.govMatchRate ?? product?.gov_match_rate ?? defaultGovRate, 0);
+  const govMaxMonthly = numberOr(simulation.govMaxMonthly ?? simulation.gov_max_monthly ?? option.maxMonthly, option.maxMonthly);
+  const govMonthlyCap = numberOr(simulation.govMonthlyCap ?? simulation.gov_monthly_cap ?? product?.govMonthlyCap ?? product?.gov_monthly_cap, isYouthLeapProduct(product) ? 24000 : 0);
+  const rawGovMatchMonthly = Math.min(monthlyAmount, govMaxMonthly) * (govRate > 1 ? govRate / 100 : govRate);
+  const govMatch = (govMonthlyCap ? Math.min(rawGovMatchMonthly, govMonthlyCap) : rawGovMatchMonthly) * monthCount;
+  const explicitTaxRate = simulation.taxSavingRate ?? simulation.tax_saving_rate ?? product?.taxSavingRate ?? product?.tax_saving_rate ?? fallbackSim.taxSavingRate;
+  const taxRate = numberOr(explicitTaxRate, (simulation.taxFree || simulation.tax_free || productHasTaxBenefit(product)) ? 0.154 : 0);
+  const taxSaved = interest * taxRate;
+  const total = principal + interest + govMatch + taxSaved;
+  return { principal, interest, govMatch, taxSaved, total };
+}
+
+function productHasTaxBenefit(product = {}) {
+  const text = [product.name, product.benefit, product.category, ...(Array.isArray(product.tags) ? product.tags : [])].filter(Boolean).join(' ');
+  return /비과세|절세|소득공제|세액공제|청년도약|ISA|연금/i.test(text);
+}
+
+function isYouthLeapProduct(product = {}) {
+  const text = [product.name, product.category, product.benefit, ...(Array.isArray(product.tags) ? product.tags : [])].filter(Boolean).join(' ');
+  return /청년도약|도약계좌|youth.?leap/i.test(text);
 }
 
 function ProductCard({ p, onApply }) {
