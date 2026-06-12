@@ -227,11 +227,12 @@ function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
   };
 }
 
-function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced' }) {
+function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced' }) {
   const snapshot = getRuntimeSnapshot();
   const products = snapshot.products || PRODUCTS;
   const sim = snapshot.sim || SIM;
   const user = snapshot.user || USER;
+  const userAge = age || user.age;
   if (!products.length) {
     const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
     const simulation = simulate(monthly, sim);
@@ -248,7 +249,7 @@ function recommendYouthProducts({ age = USER.age, annualIncome = 34200000, isHom
   const scored = products.map((p) => {
     let eligible = true;
     const reasons = [];
-    if (age < 19 || age > 34) {
+    if (userAge < 19 || userAge > 34) {
       eligible = false;
       reasons.push('만 19~34세 조건을 벗어나요');
     }
@@ -611,7 +612,7 @@ async function runJaybisOpenAIConversation(messages, context = {}, { signal } = 
 }
 
 function getJaybisOpenAIConfigStatus() {
-  if (USE_SUPABASE_AGENT && window.SUPABASE_URL && !SUPABASE_AGENT_LAST_ERROR) return `Supabase Agent · ${SUPABASE_AGENT_FUNCTION}`;
+  if (USE_SUPABASE_AGENT && window.SUPABASE_URL && !SUPABASE_AGENT_LAST_ERROR) return ` ${SUPABASE_AGENT_FUNCTION}`;
   if (SUPABASE_AGENT_LAST_ERROR && !OPENAI_CONFIGURED) return SUPABASE_AGENT_LAST_ERROR;
   if (!OPENAI_CONFIGURED) return 'OpenAI 미연결';
   if (OPENAI_LAST_ERROR) return `OpenAI 오류 · ${OPENAI_LAST_ERROR}`;

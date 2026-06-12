@@ -5,7 +5,7 @@
    ========================================================================= */
 
 const {
-  useState, useEffect, useRef, useAppSettings, summarizeEasy, speakText,
+  useState, useEffect, useRef, useAppSettings, useJaybisRuntimeData, summarizeEasy, speakText,
   StatusBar, Icon, Bar, Donut, MarkdownBubble,
   loadJaybisChatMessages, saveJaybisChatMessages, createJaybisMessageId,
   selectJaybisToolCall, executeJaybisToolCall, getJaybisToolSequence,
@@ -17,8 +17,10 @@ const {
 function Chat({ onClose, seed }) {
   const SCROLL_KEY = 'jaybis.fullChatScrollTop';
   const [settings] = useAppSettings();
+  const [snapshot] = useJaybisRuntimeData();
+  const user = snapshot?.user || USER;
   const [msgs, setMsgs] = useState(() => loadJaybisChatMessages([
-    { id: 'g1', who: 'ai', kind: 'text', text: `안녕하세요 ${USER.greeting || USER.name}님, 금융비서 제이비스예요. 예산, 소비 진단, 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.` },
+    { id: 'g1', who: 'ai', kind: 'text', text: `안녕하세요 ${user.greeting || user.name}님, 금융비서 제이비스예요. 예산, 소비 진단, 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.` },
   ]));
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState('');
@@ -85,6 +87,14 @@ function Chat({ onClose, seed }) {
     };
   }, []);
 
+  useEffect(() => {
+    setMsgs((prev) => prev.map((message) => (
+      message.id === 'g1'
+        ? { ...message, text: `안녕하세요 ${user.greeting || user.name}님, 금융비서 제이비스예요. 예산, 소비 진단, 금융상품 추천, 추천 과정 속 금융코칭 중 필요한 기능을 대화로 골라드릴게요.` }
+        : message
+    )));
+  }, [user.name, user.greeting]);
+
   const push = (m) => setMsgs((prev) => [...prev, { id: nid(), ...m }]);
 
   const emitAi = (text) => {
@@ -112,8 +122,8 @@ function Chat({ onClose, seed }) {
     setBusy(true);
     try {
       const remote = await runJaybisOpenAIConversation(nextMsgs, {
-        userName: USER?.name,
-        age: USER?.age,
+        userName: user?.name,
+        age: user?.age,
         tone: settings?.tone,
         monthlySalary: BUDGET?.salary,
         annualIncome: BUDGET?.salary ? BUDGET.salary * 12 : undefined,
