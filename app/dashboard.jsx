@@ -26,8 +26,10 @@ const FEATURE_CATALOG = {
 function Jaybis({ nav, toast, seed, clearSeed }) {
   const SCROLL_KEY = 'jaybis.chatScrollTop';
   const [settings] = window.useAppSettings();
+  const [snapshot] = useJaybisRuntimeData();
+  const user = snapshot?.user || USER;
   const [msgs, setMsgs] = useState(() => loadJaybisChatMessages([
-    { id: 'g1', who: 'ai', kind: 'text', text: `${USER.greeting || USER.name}님, 여기서 바로 이야기해요. 필요한 금융 기능을 대화로 바로 도와드릴게요.` },
+    { id: 'g1', who: 'ai', kind: 'text', text: `${user.greeting || user.name}님, 여기서 바로 이야기해요. 필요한 금융 기능을 대화로 바로 도와드릴게요.` },
   ]));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,6 +37,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
   const [chips, setChips] = useState(STARTER_FEATURE_CHIPS);
   const [cards, setCards] = useState(buildFeatureCards(null, null));
   const [pendingAction, setPendingAction] = useState(null);
+  const [featureModal, setFeatureModal] = useState(null);
   const scrollRef = useRef(null);
   const lastAiMessageIdRef = useRef(null);
   const shouldAutoScrollRef = useRef(false);
@@ -98,6 +101,14 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       window.removeEventListener('storage', syncMessages);
     };
   }, []);
+
+  useEffect(() => {
+    setMsgs((prev) => prev.map((message) => (
+      message.id === 'g1'
+        ? { ...message, text: `${user.greeting || user.name}님, 여기서 바로 이야기해요. 필요한 금융 기능을 대화로 바로 도와드릴게요.` }
+        : message
+    )));
+  }, [user.name, user.greeting]);
 
   useEffect(() => {
     if (!seed) return;
@@ -479,6 +490,24 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       setPendingAction(null);
       return true;
     }
+    if (action.type === 'openBudgetDesigner') {
+      setFeatureModal({
+        id: `budget-modal-${Date.now()}`,
+        kind: 'budgetDesigner',
+        salary: action.data?.salary || '',
+        fixedCost: '',
+        housing: '',
+        telecomTransport: '',
+        foodLiving: '',
+        wantLimit: '',
+        savingTargetAmount: '',
+        savingsGoal: '비상금',
+        budgetRule: '50_30_20',
+      });
+      emitAi('좋아요. 예산 설계 입력창을 열었어요. 필요한 값을 채운 뒤 실행을 눌러주세요.');
+      setPendingAction(null);
+      return true;
+    }
     if (action.type === 'openBudgetInput') {
       window.__JAYBIS_BUDGET_INPUT_MODE = action.mode;
       toast(action.mode === 'manual' ? '수기 입력으로 이동해요' : '마이데이터 연결로 이동해요');
@@ -578,28 +607,20 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     setCards(buildFeatureCards(result.kind, result.data, nav));
   };
 
-  const openBudgetDesigner = (text) => {
+  const askToOpenBudgetDesigner = (text) => {
     const toolCall = selectJaybisToolCall(text);
     const salary = toolCall?.arguments?.monthlySalary || ASSETS?.cashflow?.income || 0;
-    push({
-      who: 'ai',
-      kind: 'budgetDesigner',
-      salary,
-      fixedCost: '',
-      housing: '',
-      telecomTransport: '',
-      foodLiving: '',
-      wantLimit: '',
-      savingTargetAmount: '',
-      savingsGoal: '비상금',
-      budgetRule: '50_30_20',
+    askToRunAction({
+      id: `budget-designer-${Date.now()}`,
+      type: 'openBudgetDesigner',
+      data: { salary },
+      confirmText: '첫 월급 예산 설계를 실행할까요? 실행하면 입력창을 열고, 값을 채운 뒤 예산안을 만들 수 있어요.',
+      yesLabel: '예',
+      noLabel: '아니오',
     });
   };
 
-  const handleBudgetDesignerSubmit = (messageId, values) => {
-    setMsgs((prev) => prev.map((m) => (
-      m.id === messageId ? { ...m, submitted: true } : m
-    )));
+  const runBudgetDesignerSubmit = (values) => {
     const toolCall = {
       name: 'first_salary_budget_design',
       arguments: {
@@ -635,8 +656,37 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     setCards(buildFeatureCards(result.kind, result.data, nav));
   };
 
+  const handleBudgetDesignerSubmit = (messageId, values) => {
+    setMsgs((prev) => prev.map((m) => (
+      m.id === messageId ? { ...m, submitted: true } : m
+    )));
+    runBudgetDesignerSubmit(values);
+  };
+
+  const handleBudgetModalSubmit = (messageId, values) => {
+    setFeatureModal(null);
+    runBudgetDesignerSubmit(values);
+  };
+
+  const handleBudgetDesignerCancel = (messageId) => {
+    setMsgs((prev) => prev.map((m) => (
+      m.id === messageId ? { ...m, cancelled: true } : m
+    )));
+    emitAi('예산짜기를 취소했어요. 필요하면 언제든 다시 “예산 짜줘”라고 말해줘요.');
+  };
+
+  const handleBudgetModalCancel = () => {
+    setFeatureModal(null);
+    emitAi('예산짜기를 취소했어요. 필요하면 언제든 다시 “예산 짜줘”라고 말해줘요.');
+  };
+
   async function respond(text) {
     if (busy || !text?.trim()) return;
+    const activeBudgetDesigner = msgs.some((m) => m.kind === 'budgetDesigner' && !m.submitted && !m.cancelled);
+    if (activeBudgetDesigner || featureModal?.kind === 'budgetDesigner') {
+      emitAi('예산 설계 입력이 아직 끝나지 않았어요. 입력창에서 실행하거나 취소한 뒤 다음 대화를 이어갈 수 있어요.');
+      return;
+    }
     shouldAutoScrollRef.current = true;
     const prompt = text.trim();
     const now = Date.now();
@@ -684,7 +734,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
 
       const localToolCall = selectJaybisToolCall(prompt);
       if (localToolCall.name === 'first_salary_budget_design') {
-        openBudgetDesigner(prompt);
+        askToOpenBudgetDesigner(prompt);
         return;
       }
       const localDiagnosisResult = localToolCall.name === 'mydata_spending_diagnosis'
@@ -692,8 +742,8 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         : null;
 
       const remote = await runJaybisOpenAIConversation(nextMsgs, {
-        userName: USER?.name,
-        age: USER?.age,
+        userName: user?.name,
+        age: user?.age,
         tone: settings?.tone,
         monthlySalary: ASSETS?.cashflow?.income,
         annualIncome: ASSETS?.cashflow?.income ? ASSETS.cashflow.income * 12 : undefined,
@@ -782,7 +832,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         <div className="row" style={{ gap: 9 }}>
           <Logo size={23} mark />
           <div>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--ink)' }}>{USER.name}님 홈</div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--ink)' }}>{user.name}님 홈</div>
             <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>JAYBIS가 무엇이든 도와드려요 </div>
           </div>
         </div>
@@ -798,7 +848,7 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       >
         <section className="card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 12px' }}>
           <div ref={scrollRef} onScroll={rememberScroll} className="scroll" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 2 }}>
-            {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} onNavigate={nav} /></div>)}
+            {msgs.map((m) => <div key={m.id} data-message-id={m.id}><Message m={m} onChip={respond} onConfirm={handleConfirmAction} onBudgetSubmit={handleBudgetDesignerSubmit} onBudgetCancel={handleBudgetDesignerCancel} onNavigate={nav} /></div>)}
             {busy && <TypingBubble />}
           </div>
 
@@ -834,6 +884,18 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
         </section>
 
       </div>
+      {featureModal?.kind === 'budgetDesigner' && (
+        <div style={{ position:'absolute', inset:0, zIndex:20, background:'rgba(15,23,42,.28)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'64px 14px calc(var(--tab-h) + 34px)', overflow:'auto' }}>
+          <BudgetDesignerCard
+            m={featureModal}
+            onSubmit={handleBudgetModalSubmit}
+            onCancel={handleBudgetModalCancel}
+            submitLabel="실행"
+            cancelLabel="취소"
+            modal
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -887,7 +949,7 @@ function buildFeatureCards(kind, data, nav, text) {
   return base;
 }
 
-function Message({ m, onChip, onConfirm, onBudgetSubmit, onNavigate }) {
+function Message({ m, onChip, onConfirm, onBudgetSubmit, onBudgetCancel, onNavigate }) {
   if (m.who === 'me') return (
     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
       <div className="bubble bubble-me">{m.text}</div>
@@ -963,7 +1025,7 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit, onNavigate }) {
     </div>
   );
   if (m.kind === 'budgetDesigner') return (
-    <BudgetDesignerCard m={m} onSubmit={onBudgetSubmit} />
+    <BudgetDesignerCard m={m} onSubmit={onBudgetSubmit} onCancel={onBudgetCancel} />
   );
   if (m.kind === 'budgetPlanPreview') return (
     <BudgetPlanPreview data={m.data} recommendations={m.recommendations} />
@@ -971,7 +1033,7 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit, onNavigate }) {
   return null;
 }
 
-function BudgetDesignerCard({ m, onSubmit }) {
+function BudgetDesignerCard({ m, onSubmit, onCancel, submitLabel = '예산안 만들기', cancelLabel = '예산짜기 취소', modal = false }) {
   const [salary, setSalary] = useState(m.salary || '');
   const [fixedCost, setFixedCost] = useState(m.fixedCost || '');
   const [housing, setHousing] = useState(m.housing || '');
@@ -987,33 +1049,59 @@ function BudgetDesignerCard({ m, onSubmit }) {
     { key: 'aggressive_saving', label: '공격적 저축', desc: '저축 우선' },
     { key: 'starter_safe', label: '안전 스타터', desc: '필수비 여유' },
   ];
+  const requiredFields = [
+    ['세후 월급', salary],
+    ['주거·관리비', housing],
+    ['통신·교통', telecomTransport],
+    ['식비·생활', foodLiving],
+    ['여유비 한도', wantLimit],
+    ['목표 저축액', savingTargetAmount],
+  ];
+  const missingLabels = requiredFields
+    .filter(([, value]) => !String(value ?? '').trim())
+    .map(([label]) => label);
+  const [attempted, setAttempted] = useState(false);
+  const canSubmit = !m.submitted && !m.cancelled;
+  const locked = m.submitted || m.cancelled;
+
+  const submit = () => {
+    setAttempted(true);
+    if (missingLabels.length > 0) return;
+    onSubmit(m.id, { salary, fixedCost, housing, telecomTransport, foodLiving, wantLimit, savingTargetAmount, savingsGoal, budgetRule });
+  };
+  const isMissing = (label) => attempted && missingLabels.includes(label);
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-      <div className="card" style={{ maxWidth: '94%', padding: 14, border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
+    <div style={{ display: 'flex', justifyContent: 'flex-start', width: modal ? '100%' : 'auto' }}>
+      <div className="card" style={{ width: modal ? '100%' : 'auto', maxWidth: modal ? 430 : '94%', maxHeight: modal ? 'calc(100vh - var(--tab-h) - 108px)' : 'none', overflowY: modal ? 'auto' : 'visible', padding: 14, border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
         <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--ink)' }}>첫 월급 예산 설계</div>
         <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>고정비와 목표를 나눠 입력하면 더 정확하게 설계해요</div>
+        {m.cancelled && (
+          <span className="pill pill-warn" style={{ fontSize: 11.5, marginTop: 10 }}>
+            취소됨
+          </span>
+        )}
 
         <div style={{ display: 'grid', gap: 9, marginTop: 12 }}>
-          <BudgetInput label="세후 월급" value={salary} onChange={setSalary} />
-          <BudgetInput label="매달 꼭 나가는 돈" value={fixedCost} onChange={setFixedCost} placeholder="모르면 비워둬도 돼요" />
+          <BudgetInput label="세후 월급" value={salary} onChange={setSalary} disabled={locked} invalid={isMissing('세후 월급')} />
+          <BudgetInput label="매달 꼭 나가는 돈" value={fixedCost} onChange={setFixedCost} placeholder="모르면 비워둬도 돼요" disabled={locked} />
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>필수비 세부 입력</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
-              <BudgetInput label="주거·관리비" value={housing} onChange={setHousing} compact />
-              <BudgetInput label="통신·교통" value={telecomTransport} onChange={setTelecomTransport} compact />
+              <BudgetInput label="주거·관리비" value={housing} onChange={setHousing} compact disabled={locked} invalid={isMissing('주거·관리비')} />
+              <BudgetInput label="통신·교통" value={telecomTransport} onChange={setTelecomTransport} compact disabled={locked} invalid={isMissing('통신·교통')} />
             </div>
             <div style={{ marginTop: 7 }}>
-              <BudgetInput label="식비·생활" value={foodLiving} onChange={setFoodLiving} compact />
+              <BudgetInput label="식비·생활" value={foodLiving} onChange={setFoodLiving} compact disabled={locked} invalid={isMissing('식비·생활')} />
             </div>
           </div>
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--slate-600)', marginBottom: 6 }}>조절 항목</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
-              <BudgetInput label="여유비 한도" value={wantLimit} onChange={setWantLimit} compact />
-              <BudgetInput label="목표 저축액" value={savingTargetAmount} onChange={setSavingTargetAmount} compact />
+              <BudgetInput label="여유비 한도" value={wantLimit} onChange={setWantLimit} compact disabled={locked} invalid={isMissing('여유비 한도')} />
+              <BudgetInput label="목표 저축액" value={savingTargetAmount} onChange={setSavingTargetAmount} compact disabled={locked} invalid={isMissing('목표 저축액')} />
             </div>
           </div>
 
@@ -1023,6 +1111,7 @@ function BudgetDesignerCard({ m, onSubmit }) {
               {goals.map((goal) => (
                 <button
                   key={goal}
+                  disabled={locked}
                   onClick={() => setSavingsGoal(goal)}
                   className={'pill ' + (savingsGoal === goal ? 'pill-teal' : '')}
                   style={{ border: '1px solid var(--teal-100)', background: savingsGoal === goal ? 'var(--teal-50)' : 'var(--card)', fontSize: 11.5 }}
@@ -1039,6 +1128,7 @@ function BudgetDesignerCard({ m, onSubmit }) {
               {rules.map((rule) => (
                 <button
                   key={rule.key}
+                  disabled={locked}
                   onClick={() => setBudgetRule(rule.key)}
                   style={{
                     display: 'flex',
@@ -1058,29 +1148,44 @@ function BudgetDesignerCard({ m, onSubmit }) {
           </div>
 
           <button
-            disabled={m.submitted || !salary}
-            onClick={() => onSubmit(m.id, { salary, fixedCost, housing, telecomTransport, foodLiving, wantLimit, savingTargetAmount, savingsGoal, budgetRule })}
+            disabled={!canSubmit}
+            onClick={submit}
             className="btn btn-primary"
-            style={{ height: 40, fontSize: 14, boxShadow: 'none', opacity: m.submitted || !salary ? .45 : 1 }}
+            style={{ height: 40, fontSize: 14, boxShadow: 'none', opacity: canSubmit ? 1 : .45 }}
           >
-            {m.submitted ? '설계 완료' : '예산안 만들기'}
+            {m.submitted ? '설계 완료' : m.cancelled ? '취소됨' : submitLabel}
           </button>
+          {!m.submitted && !m.cancelled && attempted && missingLabels.length > 0 && (
+            <div style={{ fontSize:11.5, lineHeight:1.45, color:'var(--neg)', fontWeight:700 }}>
+              빈칸을 채워주세요: {missingLabels.join(', ')}
+            </div>
+          )}
+          {!m.submitted && !m.cancelled && (
+            <button
+              onClick={() => onCancel && onCancel(m.id)}
+              className="btn btn-line"
+              style={{ height: 38, fontSize: 13.5, borderRadius: 11 }}
+            >
+              {cancelLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function BudgetInput({ label, value, onChange, placeholder = '원 단위', compact = false }) {
+function BudgetInput({ label, value, onChange, placeholder = '원 단위', compact = false, disabled = false, invalid = false }) {
   return (
     <label style={{ display: 'grid', gap: 5 }}>
-      <span style={{ fontSize: compact ? 11.2 : 12, fontWeight: 800, color: 'var(--slate-600)' }}>{label}</span>
+      <span style={{ fontSize: compact ? 11.2 : 12, fontWeight: 800, color: invalid ? 'var(--neg)' : 'var(--slate-600)' }}>{label}</span>
       <input
         type="number"
+        disabled={disabled}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ height: compact ? 34 : 38, border: '1px solid var(--line)', borderRadius: 11, padding: '0 10px', outline: 'none', color: 'var(--ink)', background: 'var(--bg)', fontSize: compact ? 12.5 : 13.5, minWidth: 0 }}
+        style={{ height: compact ? 34 : 38, border: `1.5px solid ${invalid ? 'var(--neg)' : 'var(--line)'}`, borderRadius: 11, padding: '0 10px', outline: 'none', color: 'var(--ink)', background: invalid ? 'var(--warn-bg)' : disabled ? 'var(--slate-50)' : 'var(--bg)', fontSize: compact ? 12.5 : 13.5, minWidth: 0, opacity: disabled ? .65 : 1 }}
       />
     </label>
   );
@@ -1214,6 +1319,7 @@ const HOME_FEATURES = [
 function Home({ nav, toast }) {
   const [snapshot] = useJaybisRuntimeData();
   const [syncState, setSyncState] = useState('idle');
+  const user = snapshot?.user || USER;
   const b = snapshot?.budget || BUDGET;
   const hasConnectedData = Boolean((snapshot?.transactions || []).length || snapshot?.budget?.salary);
 
@@ -1247,7 +1353,7 @@ function Home({ nav, toast }) {
             <Logo size={24} mark />
             <div>
               <div style={{ fontSize:12.5, color:'rgba(255,255,255,.72)', fontWeight:600 }}>
-                안녕하세요, {USER.name}님
+                안녕하세요, {user.name}님
               </div>
               <div style={{ fontSize:13.5, fontWeight:700 }}>
                 오늘 필요한 금융 정보를 확인해보세요
