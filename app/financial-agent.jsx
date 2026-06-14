@@ -227,7 +227,7 @@ function diagnoseSpending({ source = 'mydata', transactions, monthlySalary }) {
   };
 }
 
-function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced' }) {
+function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = true, monthlySavingsCapacity = SIM.defaultMonthly, priority = 'balanced', employmentType = '', targetYears = 5 }) {
   const snapshot = getRuntimeSnapshot();
   const products = snapshot.products || PRODUCTS;
   const sim = snapshot.sim || SIM;
@@ -249,15 +249,26 @@ function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = tru
   const scored = products.map((p) => {
     let eligible = true;
     const reasons = [];
-    if (userAge < 19 || userAge > 34) {
+    const eligibility = p.eligibility || {};
+    const limits = p.limits || {};
+    const minAge = Number(eligibility.minAge ?? eligibility.min_age ?? 19);
+    const maxAge = Number(eligibility.maxAge ?? eligibility.max_age ?? 34);
+    const maxAnnualIncome = Number(eligibility.maxAnnualIncome ?? eligibility.max_annual_income ?? 0);
+    const requiresHomeless = Boolean(eligibility.requiresHomeless ?? eligibility.requires_homeless);
+    const allowedEmployment = Array.isArray(eligibility.employmentTypes || eligibility.employment_types)
+      ? (eligibility.employmentTypes || eligibility.employment_types)
+      : [];
+    const minMonthly = Number(p.minMonthly ?? p.min_monthly ?? limits.minMonthly ?? limits.min_monthly ?? 0);
+    const maxMonthly = Number(p.maxMonthly ?? p.max_monthly ?? limits.maxMonthly ?? limits.max_monthly ?? 0);
+    if (userAge < minAge || userAge > maxAge) {
       eligible = false;
-      reasons.push('만 19~34세 조건을 벗어나요');
+      reasons.push(`만 ${minAge}~${maxAge}세 조건을 벗어나요`);
     }
-    if (p.id === 'doyak' && annualIncome > 75000000) {
+    if ((maxAnnualIncome && annualIncome > maxAnnualIncome) || (p.id === 'doyak' && annualIncome > 75000000)) {
       eligible = false;
-      reasons.push('총급여 7,500만원 이하 조건이 필요해요');
+      reasons.push(`총급여 ${manwon(maxAnnualIncome || 75000000)}원 이하 조건이 필요해요`);
     }
-    if (p.id === 'cheongan' && !isHomeless) {
+    if ((requiresHomeless || p.id === 'cheongan') && !isHomeless) {
       eligible = false;
       reasons.push('무주택 조건이 필요해요');
     }
@@ -265,18 +276,27 @@ function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = tru
       eligible = false;
       reasons.push('총급여 5,000만원 이하 조건이 필요해요');
     }
+    if (allowedEmployment.length && employmentType && !allowedEmployment.includes(employmentType)) {
+      eligible = false;
+      reasons.push(`${employmentType} 재직 형태는 조건에 맞지 않아요`);
+    }
+    if (minMonthly && monthlySavingsCapacity < minMonthly) {
+      eligible = false;
+      reasons.push(`최소 월 납입액 ${manwon(minMonthly)}원이 필요해요`);
+    }
     const priorityBoost =
       (priority === 'housing' && p.id === 'cheongan') ||
       (priority === 'tax_deduction' && p.id === 'sodeuk') ||
       (priority === 'tax_free' && p.id === 'doyak') ? -2 : 0;
     const isJbFinancial = isJbFinancialProduct(p);
     const jbBoost = isJbFinancial ? -10 : 0;
+    const capacityBoost = maxMonthly && monthlySavingsCapacity <= maxMonthly ? -1 : 0;
     return {
       ...p,
       eligible,
       reasons,
       isJbFinancial,
-      roadmapRank: eligible ? Math.max(1, p.rank + priorityBoost + jbBoost) : 99,
+      roadmapRank: eligible ? Math.max(1, p.rank + priorityBoost + jbBoost + capacityBoost) : 99,
     };
   }).sort((a, b) => {
     if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
@@ -284,8 +304,9 @@ function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = tru
     return a.roadmapRank - b.roadmapRank;
   });
 
+  const targetTermMonths = Math.max(12, Math.round((Number(targetYears) || 5) * 12));
   const monthly = Math.min(Math.max(monthlySavingsCapacity || 0, sim.minMonthly), sim.maxMonthly);
-  const simulation = simulate(monthly, sim);
+  const simulation = simulate(monthly, { ...sim, termMonths: targetTermMonths });
   const top = scored.find((p) => p.eligible) || scored[0];
 
   return {
@@ -293,7 +314,7 @@ function recommendYouthProducts({ age, annualIncome = 34200000, isHomeless = tru
     monthly,
     simulation,
     top,
-    summary: `${user.greeting}님 조건이면 ${top.name}을 1순위로 볼게요. 월 ${manwon(monthly)}원씩 넣으면 5년 뒤 예상 수령액은 ${won(simulation.total)} 정도예요.`,
+    summary: `${user.greeting}님 조건이면 ${top.name}을 1순위로 볼게요. 월 ${manwon(monthly)}원씩 넣으면 ${targetYears || 5}년 뒤 예상 수령액은 ${won(simulation.total)} 정도예요.`,
     nextChips: [`${top.name}가 왜 1순위야?`, '월 얼마씩 넣어야 해?', '비과세가 뭐야?'],
   };
 }

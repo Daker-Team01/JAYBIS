@@ -237,7 +237,7 @@ function ToolSequence({ seq }) {
     return () => clearTimeout(t);
   }, [done]);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '82%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '82%', minWidth: 0 }}>
       {seq.map((s, i) => {
         if (i > done) return null;
         const fin = i < done;

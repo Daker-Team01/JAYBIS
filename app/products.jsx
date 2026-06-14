@@ -10,7 +10,9 @@ const {
 
 function Products({ nav, toast }) {
   const [snapshot] = useJaybisRuntimeData();
-  const products = snapshot.products?.length ? snapshot.products : PRODUCTS;
+  const recommendation = snapshot.raw?.productRecommendation || null;
+  const baseProducts = snapshot.products?.length ? snapshot.products : PRODUCTS;
+  const products = applyRecommendedProductOrder(baseProducts, recommendation);
   const sim = snapshot.sim || SIM;
   const [selectedProductId, setSelectedProductId] = useState('');
   const selectedProduct = products.find((product) => product.id === selectedProductId) || products[0] || null;
@@ -87,7 +89,9 @@ function Products({ nav, toast }) {
                 {hasProducts ? `가입 가능한 상품 ${products.length}개` : loadState === 'loading' ? '상품 데이터 불러오는 중' : '상품 데이터 대기 중'}
               </div>
               <div className="muted" style={{ fontSize:12.5, marginTop:2 }}>
-                {hasProducts ? 'Supabase 금융상품 데이터를 반영했어요' : loadError || 'financial_products 테이블 데이터가 연결되면 로드맵을 계산합니다'}
+                {recommendation?.profile
+                  ? `${formatRecommendationProfile(recommendation.profile)} 기준으로 정렬했어요`
+                  : hasProducts ? 'Supabase 금융상품 데이터를 반영했어요' : loadError || 'financial_products 테이블 데이터가 연결되면 로드맵을 계산합니다'}
               </div>
             </div>
           </div>
@@ -104,7 +108,7 @@ function Products({ nav, toast }) {
                 <div key={p.id} style={{ position:'relative', paddingLeft:46 }}>
                   <span style={{ position:'absolute', left:8, top:18, width:28, height:28, borderRadius:'50%',
                     background:p.tone, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
-                    fontSize:13, fontWeight:800, zIndex:1, boxShadow:'0 2px 6px '+p.tone+'66' }}>{p.rank}</span>
+                    fontSize:13, fontWeight:800, zIndex:1, boxShadow:'0 2px 6px '+p.tone+'66' }}>{i + 1}</span>
                   <ProductCard p={p} onApply={() => openApplyPage(p)} />
                 </div>
               )) : (
@@ -243,6 +247,26 @@ function Products({ nav, toast }) {
       </div>
     </div>
   );
+}
+
+function applyRecommendedProductOrder(products = [], recommendation = null) {
+  const ids = Array.isArray(recommendation?.productIds) ? recommendation.productIds : [];
+  if (!ids.length) return products;
+  const order = new Map(ids.map((id, index) => [id, index]));
+  return [...products].sort((a, b) => {
+    const aOrder = order.has(a.id) ? order.get(a.id) : 999;
+    const bOrder = order.has(b.id) ? order.get(b.id) : 999;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return Number(a.rank || 99) - Number(b.rank || 99);
+  });
+}
+
+function formatRecommendationProfile(profile = {}) {
+  const incomeLabel = profile.incomeType === 'annual'
+    ? `연소득 ${won(profile.income || 0)}`
+    : `월소득 ${won(profile.income || 0)}`;
+  const homelessLabel = profile.isHomeless === true ? '무주택' : '유주택';
+  return `${profile.age || '-'}세 · ${incomeLabel} · ${homelessLabel} · 월 납입 ${won(profile.monthlySavingsCapacity || 0)}`;
 }
 
 function numberOr(value, fallback = 0) {

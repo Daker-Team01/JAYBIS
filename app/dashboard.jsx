@@ -574,6 +574,21 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       setPendingAction(null);
       return true;
     }
+    if (action.type === 'openProductRecommendation') {
+      setFeatureModal({
+        id: `product-modal-${Date.now()}`,
+        kind: 'productRecommendation',
+        ...buildProductRecommendationDefaults(action.data || {}),
+      });
+      emitAi('좋아요. 상품 추천 입력창을 열었어요. 필수 정보를 채운 뒤 실행을 눌러주세요.');
+      setPendingAction(null);
+      return true;
+    }
+    if (action.type === 'reuseProductRecommendation') {
+      runProductRecommendationSubmit(action.data || {});
+      setPendingAction(null);
+      return true;
+    }
     if (action.type === 'openBudgetInput') {
       window.__JAYBIS_BUDGET_INPUT_MODE = action.mode;
       toast(action.mode === 'manual' ? '수기 입력으로 이동해요' : '마이데이터 연결로 이동해요');
@@ -643,6 +658,13 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       yesLabel: '수정',
       noLabel: '취소',
     };
+  };
+
+  const isProductRecommendationRequest = (text) => {
+    const t = text.replace(/\s/g, '');
+    return /(금융상품|상품|적금|청년상품|로드맵|가입상품|추천상품)/.test(t)
+      && /(추천|찾아|골라|알려|로드맵|가입|뭐가좋|뭐좋)/.test(t)
+      && !/(왜|이유|설명|비과세|정부기여|청약이뭐|소득공제|개념)/.test(t);
   };
 
   const parseActionRequest = (text) => {
@@ -806,11 +828,136 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     emitAi('예산짜기를 취소했어요. 필요하면 언제든 다시 “예산 짜줘”라고 말해줘요.');
   };
 
+  const buildProductRecommendationDefaults = (profile = {}) => {
+    const snapshot = getRuntimeSnapshot();
+    const saved = snapshot.raw?.productRecommendation?.profile || {};
+    const income = Number(profile.income || saved.income || snapshot.assets?.cashflow?.income || '');
+    return {
+      age: profile.age || saved.age || snapshot.user?.age || '',
+      incomeType: profile.incomeType || saved.incomeType || 'monthly',
+      income: income || '',
+      isHomeless: profile.isHomeless ?? saved.isHomeless ?? '',
+      employmentType: profile.employmentType || saved.employmentType || '',
+      monthlySavingsCapacity: profile.monthlySavingsCapacity || saved.monthlySavingsCapacity || Math.max(0, snapshot.assets?.cashflow?.left || 300000),
+      targetYears: profile.targetYears || saved.targetYears || 5,
+      priority: profile.priority || saved.priority || 'balanced',
+    };
+  };
+
+  const summarizeProductProfile = (profile = {}) => {
+    const incomeLabel = profile.incomeType === 'annual'
+      ? `연소득 ${won(profile.income || 0)}`
+      : `월소득 ${won(profile.income || 0)}`;
+    const homelessLabel = profile.isHomeless === true ? '무주택' : profile.isHomeless === false ? '유주택' : '주거상태 미입력';
+    const priorityLabels = { balanced: '균형형', tax_free: '비과세 우선', housing: '주택·청약 우선', tax_deduction: '세액공제 우선' };
+    return [
+      `${profile.age || '-'}세`,
+      incomeLabel,
+      homelessLabel,
+      profile.employmentType || '재직형태 미입력',
+      `월 납입 ${won(profile.monthlySavingsCapacity || 0)}`,
+      `${profile.targetYears || 5}년 목표`,
+      priorityLabels[profile.priority] || '균형형',
+    ].join(' · ');
+  };
+
+  const askToOpenProductRecommendation = (reuse = false) => {
+    const profile = buildProductRecommendationDefaults();
+    const hasSavedProfile = Boolean(getRuntimeSnapshot().raw?.productRecommendation?.profile);
+    if (reuse && hasSavedProfile) {
+      askToRunAction({
+        id: `product-reuse-${Date.now()}`,
+        type: 'reuseProductRecommendation',
+        data: profile,
+        confirmText: `이전에 입력한 정보가 있어요.\n\n${summarizeProductProfile(profile)}\n\n이 정보 그대로 금융상품 로드맵을 다시 추천할까요?`,
+        yesLabel: '이대로 추천',
+        noLabel: '수정',
+      });
+      return;
+    }
+    askToRunAction({
+      id: `product-recommend-${Date.now()}`,
+      type: 'openProductRecommendation',
+      data: profile,
+      confirmText: '청년 금융상품 추천 로드맵을 실행할까요? 실행하면 나이, 소득, 무주택 여부, 재직 형태, 월 납입 가능액을 입력받아 상품 페이지 로드맵에 반영합니다.',
+      yesLabel: '예',
+      noLabel: '아니오',
+    });
+  };
+
+  const saveProductRecommendationRoadmap = (result, profile) => {
+    const snapshot = getRuntimeSnapshot();
+    const data = result?.data || {};
+    const products = Array.isArray(data.products) ? data.products : [];
+    const rankedProducts = products.map((product, index) => ({
+      ...product,
+      rank: index + 1,
+      recommendationRank: index + 1,
+      recommendationProfile: profile,
+    }));
+    saveRuntimeData({
+      ...snapshot.raw,
+      products: rankedProducts.length ? rankedProducts : snapshot.raw.products,
+      productRecommendation: {
+        profile,
+        productIds: rankedProducts.map((product) => product.id),
+        topId: data.top?.id || rankedProducts[0]?.id || '',
+        monthly: data.monthly || profile.monthlySavingsCapacity,
+        simulation: data.simulation || null,
+        summary: data.summary || '',
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    return rankedProducts;
+  };
+
+  const runProductRecommendationSubmit = (values) => {
+    const profile = buildProductRecommendationDefaults(values);
+    const annualIncome = profile.incomeType === 'annual'
+      ? Number(profile.income) || 0
+      : (Number(profile.income) || 0) * 12;
+    const toolCall = {
+      name: 'recommend_youth_financial_products',
+      arguments: {
+        age: Number(profile.age) || 0,
+        annualIncome,
+        isHomeless: profile.isHomeless === true,
+        monthlySavingsCapacity: Number(profile.monthlySavingsCapacity) || 0,
+        priority: profile.priority || 'balanced',
+        employmentType: profile.employmentType,
+        targetYears: Number(profile.targetYears) || 5,
+      },
+    };
+    const seq = getJaybisToolSequence(toolCall.name);
+    push({ who: 'ai', kind: 'tools', seq, toolCall });
+    const result = executeJaybisToolCall(toolCall);
+    const rankedProducts = saveProductRecommendationRoadmap(result, profile);
+    const top = rankedProducts[0] || result.data?.top;
+    emitAiWithCta(
+      `🧭 **금융상품 로드맵을 상품 페이지에 반영했어요.**\n\n입력 기준은 ${summarizeProductProfile(profile)}입니다.\n\n1순위는 **${top?.name || '추천 상품'}**이고, 가입 가능성과 JB금융그룹 우선순위, 사용자의 목표를 함께 반영했어요.`,
+      { label: '상품 로드맵 확인', target: 'products', icon: 'products' }
+    );
+    setCards(buildFeatureCards('productRoadmapResult', result.data, nav));
+    setChips(result.data?.nextChips || STARTER_FEATURE_CHIPS);
+  };
+
+  const handleProductRecommendationModalSubmit = (messageId, values) => {
+    setFeatureModal(null);
+    runProductRecommendationSubmit(values);
+  };
+
+  const handleProductRecommendationModalCancel = () => {
+    setFeatureModal(null);
+    emitAi('상품 추천을 취소했어요. 필요하면 “금융상품 추천해줘”라고 다시 말해줘요.');
+  };
+
   async function respond(text) {
     if (busy || !text?.trim()) return;
     const activeBudgetDesigner = msgs.some((m) => m.kind === 'budgetDesigner' && !m.submitted && !m.cancelled);
-    if (activeBudgetDesigner || featureModal?.kind === 'budgetDesigner') {
-      emitAi('예산 설계 입력이 아직 끝나지 않았어요. 입력창에서 실행하거나 취소한 뒤 다음 대화를 이어갈 수 있어요.');
+    if (activeBudgetDesigner || featureModal?.kind === 'budgetDesigner' || featureModal?.kind === 'productRecommendation') {
+      emitAi(featureModal?.kind === 'productRecommendation'
+        ? '상품 추천 입력이 아직 끝나지 않았어요. 입력창에서 실행하거나 취소한 뒤 다음 대화를 이어갈 수 있어요.'
+        : '예산 설계 입력이 아직 끝나지 않았어요. 입력창에서 실행하거나 취소한 뒤 다음 대화를 이어갈 수 있어요.');
       return;
     }
     shouldAutoScrollRef.current = true;
@@ -855,6 +1002,11 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
       const requestedAction = parseActionRequest(prompt);
       if (requestedAction) {
         askToRunAction(requestedAction);
+        return;
+      }
+
+      if (isProductRecommendationRequest(prompt)) {
+        askToOpenProductRecommendation(Boolean(getRuntimeSnapshot().raw?.productRecommendation?.profile));
         return;
       }
 
@@ -926,10 +1078,20 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
     const storedAction = msgs.find((m) => m.kind === 'confirm' && m.actionId === actionId)?.action;
     const action = pendingAction?.id === actionId ? pendingAction : storedAction;
     if (!action) return;
-    push({ who: 'me', kind: 'text', text: approved ? '응' : '아니오' });
-    resolveConfirmMessage(actionId, approved ? 'approved' : 'denied');
+    push({ who: 'me', kind: 'text', text: approved ? '응' : action.type === 'reuseProductRecommendation' ? '수정' : '아니오' });
+    resolveConfirmMessage(actionId, approved ? 'approved' : action.type === 'reuseProductRecommendation' ? 'revised' : 'denied');
     if (approved) {
       runConfirmedAction(action);
+      return;
+    }
+    if (action.type === 'reuseProductRecommendation') {
+      setPendingAction(null);
+      setFeatureModal({
+        id: `product-modal-${Date.now()}`,
+        kind: 'productRecommendation',
+        ...buildProductRecommendationDefaults(action.data || {}),
+      });
+      emitAi('좋아요. 기존 정보를 수정할 수 있게 입력창을 열었어요.');
       return;
     }
     setPendingAction(null);
@@ -1022,6 +1184,16 @@ function Jaybis({ nav, toast, seed, clearSeed }) {
           />
         </div>
       )}
+      {featureModal?.kind === 'productRecommendation' && (
+        <div style={{ position:'absolute', inset:0, zIndex:20, background:'rgba(15,23,42,.28)', display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'64px 14px calc(var(--tab-h) + 34px)', overflow:'auto' }}>
+          <ProductRecommendationCard
+            m={featureModal}
+            onSubmit={handleProductRecommendationModalSubmit}
+            onCancel={handleProductRecommendationModalCancel}
+            modal
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1088,7 +1260,7 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit, onBudgetCancel, onNavig
   );
   if (m.kind === 'textCta') return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-      <div style={{ maxWidth: '86%' }}>
+      <div style={{ maxWidth: '86%', minWidth: 0, overflowWrap: 'anywhere' }}>
         <MarkdownBubble text={m.text} />
         {m.cta && (
           <button
@@ -1123,7 +1295,7 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit, onBudgetCancel, onNavig
   );
   if (m.kind === 'confirm') return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-      <div className="card" style={{ maxWidth: '86%', padding: '12px 13px', border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
+      <div className="card" style={{ maxWidth: '86%', minWidth: 0, overflowWrap: 'anywhere', padding: '12px 13px', border: '1px solid var(--teal-100)', boxShadow: 'var(--shadow-sm)' }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)', marginBottom: 9 }}>{m.prompt || '이 작업을 실행할까요?'}</div>
         {m.resolved ? (
           <span className={'pill ' + (m.resolved === 'approved' ? 'pill-pos' : m.resolved === 'revised' ? 'pill-teal' : 'pill-warn')} style={{ fontSize: 11.5 }}>
@@ -1134,14 +1306,14 @@ function Message({ m, onChip, onConfirm, onBudgetSubmit, onBudgetCancel, onNavig
             <button
               onClick={() => onConfirm(true, m.actionId)}
               className="btn btn-primary"
-              style={{ height: 36, flex: 1, fontSize: 13.5, borderRadius: 11, boxShadow: 'none' }}
+              style={{ minHeight: 38, height: 'auto', flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.25, borderRadius: 11, boxShadow: 'none', padding: '8px 10px', whiteSpace: 'normal', wordBreak: 'keep-all' }}
             >
               {m.yesLabel || '응'}
             </button>
             <button
               onClick={() => onConfirm(false, m.actionId)}
               className="btn btn-line"
-              style={{ height: 36, flex: 1, fontSize: 13.5, borderRadius: 11 }}
+              style={{ minHeight: 38, height: 'auto', flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.25, borderRadius: 11, padding: '8px 10px', whiteSpace: 'normal', wordBreak: 'keep-all' }}
             >
               {m.noLabel || '아니오'}
             </button>
@@ -1295,6 +1467,131 @@ function BudgetDesignerCard({ m, onSubmit, onCancel, submitLabel = '예산안 �
               {cancelLabel}
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProductRecommendationCard({ m, onSubmit, onCancel, modal = false }) {
+  const [age, setAge] = useState(m.age || '');
+  const [incomeType, setIncomeType] = useState(m.incomeType || 'monthly');
+  const [income, setIncome] = useState(m.income || '');
+  const [isHomeless, setIsHomeless] = useState(m.isHomeless === true ? 'yes' : m.isHomeless === false ? 'no' : '');
+  const [employmentType, setEmploymentType] = useState(m.employmentType || '');
+  const [monthlySavingsCapacity, setMonthlySavingsCapacity] = useState(m.monthlySavingsCapacity || '');
+  const [targetYears, setTargetYears] = useState(m.targetYears || 5);
+  const [priority, setPriority] = useState(m.priority || 'balanced');
+  const [attempted, setAttempted] = useState(false);
+  const employmentOptions = ['정규직', '계약직', '프리랜서', '자영업', '취업준비'];
+  const priorityOptions = [
+    { key: 'balanced', label: '균형형' },
+    { key: 'tax_free', label: '비과세' },
+    { key: 'housing', label: '주택·청약' },
+    { key: 'tax_deduction', label: '세액공제' },
+  ];
+  const requiredFields = [
+    ['나이', age],
+    [incomeType === 'annual' ? '연소득' : '월소득', income],
+    ['무주택 여부', isHomeless],
+    ['재직 형태', employmentType],
+    ['월 납입 가능액', monthlySavingsCapacity],
+    ['목표 기간', targetYears],
+  ];
+  const missingLabels = requiredFields
+    .filter(([, value]) => !String(value ?? '').trim())
+    .map(([label]) => label);
+  const isMissing = (label) => attempted && missingLabels.includes(label);
+  const submit = () => {
+    setAttempted(true);
+    if (missingLabels.length > 0) return;
+    onSubmit(m.id, {
+      age,
+      incomeType,
+      income,
+      isHomeless: isHomeless === 'yes',
+      employmentType,
+      monthlySavingsCapacity,
+      targetYears,
+      priority,
+    });
+  };
+
+  return (
+    <div style={{ display:'flex', justifyContent:'flex-start', width: modal ? '100%' : 'auto' }}>
+      <div className="card" style={{ width: modal ? '100%' : 'auto', maxWidth: modal ? 430 : '94%', maxHeight: modal ? 'calc(100vh - var(--tab-h) - 108px)' : 'none', overflowY: modal ? 'auto' : 'visible', padding:14, border:'1px solid var(--teal-100)', boxShadow:'var(--shadow-sm)' }}>
+        <div style={{ fontSize:14.5, fontWeight:800, color:'var(--ink)' }}>청년 금융상품 추천</div>
+        <div className="muted" style={{ fontSize:12, marginTop:2 }}>입력 정보를 기준으로 상품 페이지 로드맵을 다시 정렬해요</div>
+
+        <div style={{ display:'grid', gap:9, marginTop:12 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+            <BudgetInput label="나이" value={age} onChange={setAge} compact placeholder="예: 27" invalid={isMissing('나이')} />
+            <BudgetInput label={incomeType === 'annual' ? '연소득' : '월소득'} value={income} onChange={setIncome} compact placeholder="원 단위" invalid={isMissing(incomeType === 'annual' ? '연소득' : '월소득')} />
+          </div>
+
+          <div>
+            <div style={{ fontSize:12, fontWeight:800, color:isMissing('월소득') || isMissing('연소득') ? 'var(--neg)' : 'var(--slate-600)', marginBottom:6 }}>소득 기준</div>
+            <div className="seg">
+              <button className={incomeType === 'monthly' ? 'on' : ''} onClick={() => setIncomeType('monthly')}>월소득</button>
+              <button className={incomeType === 'annual' ? 'on' : ''} onClick={() => setIncomeType('annual')}>연소득</button>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize:12, fontWeight:800, color:isMissing('무주택 여부') ? 'var(--neg)' : 'var(--slate-600)', marginBottom:6 }}>무주택 여부</div>
+            <div className="seg">
+              <button className={isHomeless === 'yes' ? 'on' : ''} onClick={() => setIsHomeless('yes')}>무주택</button>
+              <button className={isHomeless === 'no' ? 'on' : ''} onClick={() => setIsHomeless('no')}>유주택</button>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize:12, fontWeight:800, color:isMissing('재직 형태') ? 'var(--neg)' : 'var(--slate-600)', marginBottom:6 }}>재직 형태</div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {employmentOptions.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setEmploymentType(option)}
+                  className={'pill ' + (employmentType === option ? 'pill-teal' : '')}
+                  style={{ border:`1px solid ${isMissing('재직 형태') ? 'var(--neg)' : 'var(--teal-100)'}`, background:employmentType === option ? 'var(--teal-50)' : 'var(--card)', fontSize:11.5 }}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+            <BudgetInput label="월 납입 가능액" value={monthlySavingsCapacity} onChange={setMonthlySavingsCapacity} compact invalid={isMissing('월 납입 가능액')} />
+            <BudgetInput label="목표 기간" value={targetYears} onChange={setTargetYears} compact placeholder="년" invalid={isMissing('목표 기간')} />
+          </div>
+
+          <div>
+            <div style={{ fontSize:12, fontWeight:800, color:'var(--slate-600)', marginBottom:6 }}>추천 우선순위</div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+              {priorityOptions.map((option) => (
+                <button
+                  key={option.key}
+                  onClick={() => setPriority(option.key)}
+                  style={{ height:36, borderRadius:11, border:`1px solid ${priority === option.key ? 'var(--teal-600)' : 'var(--line)'}`, background:priority === option.key ? 'var(--teal-50)' : 'var(--card)', color:priority === option.key ? 'var(--teal-700)' : 'var(--ink)', fontSize:12.5, fontWeight:800 }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button onClick={submit} className="btn btn-primary" style={{ height:40, fontSize:14, boxShadow:'none' }}>
+            실행
+          </button>
+          {attempted && missingLabels.length > 0 && (
+            <div style={{ fontSize:11.5, lineHeight:1.45, color:'var(--neg)', fontWeight:700 }}>
+              빈칸을 채워주세요: {missingLabels.join(', ')}
+            </div>
+          )}
+          <button onClick={() => onCancel && onCancel(m.id)} className="btn btn-line" style={{ height:38, fontSize:13.5, borderRadius:11 }}>
+            취소
+          </button>
         </div>
       </div>
     </div>
