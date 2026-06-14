@@ -250,8 +250,9 @@ function numberOr(value, fallback = 0) {
   return Number.isFinite(next) && next > 0 ? next : fallback;
 }
 
-function rateFromProduct(product = {}, fallback = 0) {
-  const simulation = product.simulation || {};
+function rateFromProduct(product, fallback = 0) {
+  const simulation = product?.simulation || {};
+  product = product || {};
   const rawRate = numberOr(simulation.rateAnnual ?? simulation.rate_annual ?? product.rateAnnual ?? product.rate_annual ?? product.maxRate ?? product.max_rate ?? product.minRate ?? product.min_rate, fallback);
   return rawRate > 1 ? rawRate / 100 : rawRate;
 }
@@ -316,11 +317,13 @@ function simulateProductPlan({ product, monthly, years, fallbackSim = SIM }) {
 }
 
 function productHasTaxBenefit(product = {}) {
+  product = product || {};
   const text = [product.name, product.benefit, product.category, ...(Array.isArray(product.tags) ? product.tags : [])].filter(Boolean).join(' ');
   return /비과세|절세|소득공제|세액공제|청년도약|ISA|연금/i.test(text);
 }
 
 function isYouthLeapProduct(product = {}) {
+  product = product || {};
   const text = [product.name, product.category, product.benefit, ...(Array.isArray(product.tags) ? product.tags : [])].filter(Boolean).join(' ');
   return /청년도약|도약계좌|youth.?leap/i.test(text);
 }
